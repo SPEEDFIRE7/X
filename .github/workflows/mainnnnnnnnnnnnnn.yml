@@ -74,9 +74,9 @@ jobs:
           mkdir -p .repo/local_manifests
           cat > .repo/local_manifests/oppo_CPH2185.xml <<EOF
           <manifest>
-            <remote name="github" fetch="https://github.com/" />
-            <project name="${{ inputs.repo }}" path="device/oppo/CPH2185" remote="github" revision="${{ inputs.device_branch }}" />
-            <project name="${{ inputs.repo }}" path="vendor/oppo/CPH2185" remote="github" revision="${{ inputs.vendor_branch }}" />
+            <remote name="speedfire" fetch="https://github.com/" />
+            <project name="${{ inputs.repo }}" path="device/oppo/CPH2185" remote="speedfire" revision="${{ inputs.device_branch }}" />
+            <project name="${{ inputs.repo }}" path="vendor/oppo/CPH2185" remote="speedfire" revision="${{ inputs.vendor_branch }}" />
           </manifest>
           EOF
 
