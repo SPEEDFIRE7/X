@@ -1,4 +1,4 @@
-name: Build Oppo A15 recovery (CPH2185)
+name: Build LineageOS 17.1 recovery (CPH2185)
 
 on:
   workflow_dispatch:
@@ -18,29 +18,24 @@ on:
         required: true
         default: "vendor-lineage-17.1"
         type: string
-      recovery_manifest:
-        description: "Minimal TWRP manifest URL"
+      lineage_branch:
+        description: "LineageOS manifest branch"
         required: true
-        default: "https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git"
-        type: string
-      recovery_branch:
-        description: "Manifest branch"
-        required: true
-        default: "twrp-10.0"
+        default: "lineage-17.1"
         type: string
       lunch_target:
         description: "lunch target"
         required: true
-        default: "twrp_CPH2185-eng"
+        default: "lineage_CPH2185-userdebug"
         type: string
 
 jobs:
   build-recovery:
     runs-on: namespace-profile-speed
-    timeout-minutes: 300
+    timeout-minutes: 360
 
     env:
-      WORK: ${{ github.workspace }}/recovery
+      WORK: ${{ github.workspace }}/lineage
       OUT_DIR: ${{ github.workspace }}/out-artifacts
 
     steps:
@@ -65,12 +60,13 @@ jobs:
           chmod a+x "$HOME/bin/repo"
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Init recovery manifest
+      - name: Init LineageOS manifest
         run: |
           mkdir -p "$WORK" && cd "$WORK"
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          repo init -u "${{ inputs.recovery_manifest }}" -b "${{ inputs.recovery_branch }}" --depth=1
+          git lfs install
+          repo init -u https://github.com/LineageOS/android.git -b "${{ inputs.lineage_branch }}" --git-lfs --depth=1
 
       - name: Add device and vendor trees
         run: |
@@ -93,7 +89,7 @@ jobs:
         run: |
           cd "$WORK"
           test -f device/oppo/CPH2185/BoardConfig.mk || { echo "BoardConfig.mk missing"; exit 1; }
-          test -f device/oppo/CPH2185/twrp_CPH2185.mk || { echo "twrp_CPH2185.mk missing"; exit 1; }
+          test -f device/oppo/CPH2185/lineage_CPH2185.mk || { echo "lineage_CPH2185.mk missing"; exit 1; }
           test -d vendor/oppo/CPH2185/proprietary || { echo "vendor blobs missing"; exit 1; }
 
       - name: Build recovery
@@ -119,6 +115,6 @@ jobs:
       - name: Upload recovery artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oppo-a15-recovery
+          name: oppo-a15-lineage-recovery
           path: ${{ env.OUT_DIR }}
           retention-days: 14
