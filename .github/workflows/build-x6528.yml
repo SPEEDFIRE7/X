@@ -1,0 +1,382 @@
+name: Build LineageOS 20 for X6528 from the two published trees
+
+# Runner is FIXED for now to: namespace-profile-speed
+# To change it later, edit only the `runs-on:` line in the `build` job below.
+#
+# NOTE: Namespace runners are usually ephemeral. By default this workflow now
+# runs `repo init` + `repo sync` into source_dir on every run, so you can safely
+# use a temporary path such as /tmp/lineage-20. Set sync_source=false only if
+# you attach a persistent cache volume with an already-synced tree.
+#
+# IMPORTANT: the LineageOS manifest branch is `lineage-20.0` (with ".0").
+#
+# On every run this workflow:
+#   0) syncs LineageOS 20 source into source_dir (unless sync_source=false)
+#   1) checks out android_device_infinix_X6528 (branch: lineage-20)
+#   2) checks out android_vendor_infinix_X6528 (branch: lineage-20)
+#   3) installs both into <source_dir>/device/infinix/X6528 and
+#      <source_dir>/vendor/infinix/X6528, while PRESERVING proprietary/
+#   4) optionally downloads the proprietary blobs from Pixeldrain
+#   5) runs lunch + mka for the selected target
+#   6) uploads the produced images / ROM zip and the build log
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_dir:
+        description: 'Absolute path for the LineageOS tree (temp path is fine when sync_source=true)'
+        required: true
+        default: '/tmp/lineage-20'
+        type: string
+      sync_source:
+        description: 'Run repo init + repo sync into source_dir before building'
+        required: false
+        default: true
+        type: boolean
+      manifest_url:
+        description: 'LineageOS manifest URL'
+        required: true
+        default: 'https://github.com/LineageOS/android.git'
+        type: string
+      manifest_branch:
+        description: 'Manifest branch (LineageOS 20 uses lineage-20.0, not lineage-20)'
+        required: true
+        default: 'lineage-20.0'
+        type: string
+      sync_depth:
+        description: 'repo init --depth value'
+        required: true
+        default: '1'
+        type: string
+      sync_jobs:
+        description: 'repo sync parallel jobs, 0 = nproc'
+        required: true
+        default: '0'
+        type: string
+      source_branch:
+        description: 'Branch to read in both source repos'
+        required: true
+        default: 'lineage-20'
+        type: string
+      device_repo:
+        description: 'Device repo owner/name. Blank = <owner>/android_device_infinix_X6528'
+        required: false
+        type: string
+      vendor_repo:
+        description: 'Vendor repo owner/name. Blank = <owner>/android_vendor_infinix_X6528'
+        required: false
+        type: string
+      lunch_target:
+        description: 'lunch target'
+        required: true
+        default: 'lineage_X6528-userdebug'
+        type: string
+      product_name:
+        description: 'Folder name under out/target/product'
+        required: true
+        default: 'X6528'
+        type: string
+      build_target:
+        description: 'What to build'
+        required: true
+        default: 'whole_rom'
+        type: choice
+        options:
+          - whole_rom
+          - vendor_boot
+          - boot
+          - dtbo
+          - recovery
+          - custom
+      custom_targets:
+        description: 'Only for build_target = custom, e.g. vendor_bootimage bootimage'
+        required: false
+        type: string
+      jobs:
+        description: 'Parallel jobs, 0 = nproc'
+        required: true
+        default: '0'
+        type: string
+      clean_build:
+        description: 'Run mka clean before building'
+        required: false
+        default: false
+        type: boolean
+      blobs_mode:
+        description: 'Where to get proprietary blobs'
+        required: true
+        default: 'existing'
+        type: choice
+        options:
+          - existing
+          - pixeldrain
+      blobs_pixeldrain_id:
+        description: 'Pixeldrain ID or URL of the blobs zip (only when blobs_mode = pixeldrain)'
+        required: false
+        type: string
+      java_home:
+        description: 'Optional JAVA_HOME, e.g. /usr/lib/jvm/java-11-openjdk-amd64'
+        required: false
+        type: string
+      upload_artifacts:
+        description: 'Upload built images and ROM zip as artifacts'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-x6528-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: namespace-profile-speed
+    timeout-minutes: 720
+    steps:
+      - name: Show selected options
+        shell: bash
+        run: |
+          echo "runner         : namespace-profile-speed"
+          echo "source_dir     : ${{ inputs.source_dir }}"
+          echo "sync_source    : ${{ inputs.sync_source }}"
+          echo "manifest       : ${{ inputs.manifest_url }} (${{ inputs.manifest_branch }})"
+          echo "source_branch  : ${{ inputs.source_branch }}"
+          echo "lunch_target   : ${{ inputs.lunch_target }}"
+          echo "build_target   : ${{ inputs.build_target }}"
+          echo "custom_targets : ${{ inputs.custom_targets }}"
+          echo "jobs           : ${{ inputs.jobs }}"
+          echo "blobs_mode     : ${{ inputs.blobs_mode }}"
+
+      - name: Resolve repository names
+        id: repos
+        shell: bash
+        env:
+          DEVICE_REPO: ${{ inputs.device_repo || format('{0}/android_device_infinix_X6528', github.repository_owner) }}
+          VENDOR_REPO: ${{ inputs.vendor_repo || format('{0}/android_vendor_infinix_X6528', github.repository_owner) }}
+        run: |
+          set -euo pipefail
+          echo "device=$DEVICE_REPO" >> "$GITHUB_OUTPUT"
+          echo "vendor=$VENDOR_REPO" >> "$GITHUB_OUTPUT"
+          echo "Device repo: $DEVICE_REPO"
+          echo "Vendor repo: $VENDOR_REPO"
+
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repos.outputs.device }}
+          ref: ${{ inputs.source_branch }}
+          path: .src-device
+          fetch-depth: 1
+          token: ${{ secrets.REPO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout vendor tree
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repos.outputs.vendor }}
+          ref: ${{ inputs.source_branch }}
+          path: .src-vendor
+          fetch-depth: 1
+          token: ${{ secrets.REPO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Sync LineageOS source
+        if: inputs.sync_source
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          MANIFEST_URL: ${{ inputs.manifest_url }}
+          MANIFEST_BRANCH: ${{ inputs.manifest_branch }}
+          SYNC_DEPTH: ${{ inputs.sync_depth }}
+          SYNC_JOBS: ${{ inputs.sync_jobs }}
+        run: |
+          set -euo pipefail
+          command -v python3 >/dev/null || { echo "::error::python3 is required for repo"; exit 1; }
+
+          if ! command -v repo >/dev/null; then
+            echo "Installing repo tool"
+            mkdir -p "$HOME/.local/bin"
+            curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+              -o "$HOME/.local/bin/repo"
+            chmod +x "$HOME/.local/bin/repo"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+          mkdir -p "$SOURCE_DIR"
+          cd "$SOURCE_DIR"
+
+          if [[ ! -d .repo ]]; then
+            echo "Initializing $MANIFEST_URL ($MANIFEST_BRANCH) in $SOURCE_DIR"
+            repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH" --depth="$SYNC_DEPTH"
+          else
+            echo "Reusing existing .repo in $SOURCE_DIR"
+          fi
+
+          JOBS="$SYNC_JOBS"
+          [[ "$JOBS" == "0" ]] && JOBS=$(nproc)
+          echo "Syncing source with -j$JOBS"
+          repo sync -j"$JOBS" --no-clone-bundle --no-tags --fail-fast
+
+      - name: Validate source tree
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          command -v rsync >/dev/null || { echo "::error::rsync is required on the runner"; exit 1; }
+          [[ -d "$SOURCE_DIR" ]] || { echo "::error::source_dir does not exist: $SOURCE_DIR"; exit 1; }
+          [[ -f "$SOURCE_DIR/build/envsetup.sh" ]] \
+            || { echo "::error::Not a LineageOS tree (build/envsetup.sh missing): $SOURCE_DIR"; exit 1; }
+          mkdir -p "$SOURCE_DIR/device/infinix/X6528" "$SOURCE_DIR/vendor/infinix/X6528"
+          echo "Source tree OK: $SOURCE_DIR"
+
+      - name: Install the two trees (preserve proprietary/)
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            --exclude='.git' --exclude='.github' --exclude='proprietary' \
+            .src-device/ "$SOURCE_DIR/device/infinix/X6528/"
+          rsync -a --delete \
+            --exclude='.git' --exclude='.github' --exclude='proprietary' \
+            .src-vendor/ "$SOURCE_DIR/vendor/infinix/X6528/"
+          echo "Device tree root:"
+          find "$SOURCE_DIR/device/infinix/X6528" -mindepth 1 -maxdepth 1 -printf '  %f\n' | sort | head -30
+          echo "Vendor tree root:"
+          find "$SOURCE_DIR/vendor/infinix/X6528" -mindepth 1 -maxdepth 1 -printf '  %f\n' | sort
+
+      - name: Download blobs from Pixeldrain
+        if: inputs.blobs_mode == 'pixeldrain'
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          BLOBS_INPUT: ${{ inputs.blobs_pixeldrain_id }}
+        run: |
+          set -euo pipefail
+          [[ -n "$BLOBS_INPUT" ]] \
+            || { echo "::error::blobs_pixeldrain_id is required when blobs_mode = pixeldrain"; exit 1; }
+
+          ID_OR_URL="$BLOBS_INPUT"
+          if [[ "$ID_OR_URL" =~ ^https?://(www\.)?pixeldrain\.com/u/([A-Za-z0-9_-]+) ]]; then
+            URL="https://pixeldrain.com/api/file/${BASH_REMATCH[2]}"
+          elif [[ "$ID_OR_URL" =~ ^https?://(www\.)?pixeldrain\.com/api/file/([A-Za-z0-9_-]+) ]]; then
+            URL="https://pixeldrain.com/api/file/${BASH_REMATCH[2]}"
+          elif [[ "$ID_OR_URL" == http* ]]; then
+            URL="$ID_OR_URL"
+          else
+            URL="https://pixeldrain.com/api/file/$ID_OR_URL"
+          fi
+          echo "Blobs URL: $URL"
+
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 \
+            --user-agent "Mozilla/5.0 (compatible; X6528-builder/1.0)" \
+            -o /tmp/x6528-blobs.zip "$URL"
+          unzip -tq /tmp/x6528-blobs.zip >/dev/null \
+            || { echo "::error::Blobs download is not a valid zip"; exit 1; }
+
+          # The zip contains vendor/infinix/X6528/proprietary/... so extract at tree root.
+          unzip -q -o /tmp/x6528-blobs.zip -d "$SOURCE_DIR"
+          echo "Blobs extracted into $SOURCE_DIR/vendor/infinix/X6528/proprietary"
+
+      - name: Verify blobs are present
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          if find "$SOURCE_DIR/vendor/infinix/X6528/proprietary" -mindepth 1 2>/dev/null | grep -q .; then
+            echo "Proprietary blobs found."
+          else
+            echo "::warning::No proprietary blobs found. boot/dtbo may build, full ROM will likely fail."
+          fi
+
+      - name: Build selected target
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          LUNCH_TARGET: ${{ inputs.lunch_target }}
+          BUILD_TARGET: ${{ inputs.build_target }}
+          CUSTOM_TARGETS: ${{ inputs.custom_targets }}
+          JOBS_INPUT: ${{ inputs.jobs }}
+          CLEAN_BUILD: ${{ inputs.clean_build }}
+          JAVA_HOME_INPUT: ${{ inputs.java_home }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$JAVA_HOME_INPUT" ]]; then
+            export JAVA_HOME="$JAVA_HOME_INPUT"
+            export PATH="$JAVA_HOME/bin:$PATH"
+            echo "Using JAVA_HOME=$JAVA_HOME"
+          fi
+
+          cd "$SOURCE_DIR"
+          source build/envsetup.sh
+          lunch "$LUNCH_TARGET"
+
+          case "$BUILD_TARGET" in
+            whole_rom)   TARGETS="lineage" ;;
+            vendor_boot) TARGETS="vendor_bootimage" ;;
+            boot)        TARGETS="bootimage" ;;
+            dtbo)        TARGETS="dtboimage" ;;
+            recovery)    TARGETS="recoveryimage" ;;
+            custom)      TARGETS="$CUSTOM_TARGETS" ;;
+            *) echo "::error::Unknown build_target: $BUILD_TARGET"; exit 1 ;;
+          esac
+
+          [[ -n "$TARGETS" ]] || { echo "::error::Empty target list (set custom_targets)"; exit 1; }
+
+          JOBS="$JOBS_INPUT"
+          [[ "$JOBS" == "0" ]] && JOBS=$(nproc)
+
+          read -r -a TARGET_ARR <<< "$TARGETS"
+          echo "Targets: ${TARGET_ARR[*]}"
+          echo "Parallel jobs: $JOBS"
+
+          if [[ "$CLEAN_BUILD" == "true" ]]; then
+            echo "Running mka clean"
+            mka clean
+          fi
+
+          mka -j"$JOBS" "${TARGET_ARR[@]}" 2>&1 | tee /tmp/x6528-build.log
+
+      - name: Collect artifacts
+        if: inputs.upload_artifacts
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          PRODUCT_NAME: ${{ inputs.product_name }}
+        run: |
+          set -euo pipefail
+          OUT="$SOURCE_DIR/out/target/product/$PRODUCT_NAME"
+          DEST="$RUNNER_TEMP/x6528-artifacts"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          [[ -d "$OUT" ]] || { echo "::error::Output dir not found: $OUT"; exit 1; }
+
+          for f in boot.img vendor_boot.img init_boot.img dtbo.img recovery.img vbmeta.img vbmeta_system.img vendor_dlkm.img; do
+            [[ -f "$OUT/$f" ]] && cp -v "$OUT/$f" "$DEST/" || true
+          done
+          find "$OUT" -maxdepth 1 -type f -name 'lineage-*.zip' -exec cp -v {} "$DEST/" \;
+          find "$OUT" -maxdepth 1 -type f -name '*-ota.zip' -exec cp -v {} "$DEST/" \;
+
+          echo "Collected artifacts:"
+          ls -lh "$DEST"
+
+      - name: Upload artifacts
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x6528-build-output
+          path: ${{ runner.temp }}/x6528-artifacts/*
+          if-no-files-found: warn
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x6528-build-log
+          path: /tmp/x6528-build.log
+          if-no-files-found: ignore
