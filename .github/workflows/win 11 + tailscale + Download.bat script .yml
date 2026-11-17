@@ -5,7 +5,7 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: namespace-profile-speedfire
+    runs-on: windows-latest
     timeout-minutes: 350
 
     steps:
