@@ -1,0 +1,117 @@
+          elif [[ "$ID_OR_URL" == http* ]]; then
+            URL="$ID_OR_URL"
+          else
+            URL="https://pixeldrain.com/api/file/$ID_OR_URL"
+          fi
+          echo "Blobs URL: $URL"
+
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 \
+            --user-agent "Mozilla/5.0 (compatible; X6528-builder/1.0)" \
+            -o /tmp/x6528-blobs.zip "$URL"
+          unzip -tq /tmp/x6528-blobs.zip >/dev/null \
+            || { echo "::error::Blobs download is not a valid zip"; exit 1; }
+
+          # The zip contains vendor/infinix/X6528/proprietary/... so extract at tree root.
+          unzip -q -o /tmp/x6528-blobs.zip -d "$SOURCE_DIR"
+          echo "Blobs extracted into $SOURCE_DIR/vendor/infinix/X6528/proprietary"
+
+      - name: Verify blobs are present
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          if find "$SOURCE_DIR/vendor/infinix/X6528/proprietary" -mindepth 1 2>/dev/null | grep -q .; then
+            echo "Proprietary blobs found."
+          else
+            echo "::warning::No proprietary blobs found. boot/dtbo may build, full ROM will likely fail."
+          fi
+
+      - name: Build selected target
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          LUNCH_TARGET: ${{ inputs.lunch_target }}
+          BUILD_TARGET: ${{ inputs.build_target }}
+          CUSTOM_TARGETS: ${{ inputs.custom_targets }}
+          JOBS_INPUT: ${{ inputs.jobs }}
+          CLEAN_BUILD: ${{ inputs.clean_build }}
+          JAVA_HOME_INPUT: ${{ inputs.java_home }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$JAVA_HOME_INPUT" ]]; then
+            export JAVA_HOME="$JAVA_HOME_INPUT"
+            export PATH="$JAVA_HOME/bin:$PATH"
+            echo "Using JAVA_HOME=$JAVA_HOME"
+          fi
+
+          cd "$SOURCE_DIR"
+          source build/envsetup.sh
+          lunch "$LUNCH_TARGET"
+
+          case "$BUILD_TARGET" in
+            whole_rom)   TARGETS="lineage" ;;
+            vendor_boot) TARGETS="vendor_bootimage" ;;
+            boot)        TARGETS="bootimage" ;;
+            dtbo)        TARGETS="dtboimage" ;;
+            recovery)    TARGETS="recoveryimage" ;;
+            custom)      TARGETS="$CUSTOM_TARGETS" ;;
+            *) echo "::error::Unknown build_target: $BUILD_TARGET"; exit 1 ;;
+          esac
+
+          [[ -n "$TARGETS" ]] || { echo "::error::Empty target list (set custom_targets)"; exit 1; }
+
+          JOBS="$JOBS_INPUT"
+          [[ "$JOBS" == "0" ]] && JOBS=$(nproc)
+
+          read -r -a TARGET_ARR <<< "$TARGETS"
+          echo "Targets: ${TARGET_ARR[*]}"
+          echo "Parallel jobs: $JOBS"
+
+          if [[ "$CLEAN_BUILD" == "true" ]]; then
+            echo "Running mka clean"
+            mka clean
+          fi
+
+          mka -j"$JOBS" "${TARGET_ARR[@]}" 2>&1 | tee /tmp/x6528-build.log
+
+      - name: Collect artifacts
+        if: inputs.upload_artifacts
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          PRODUCT_NAME: ${{ inputs.product_name }}
+        run: |
+          set -euo pipefail
+          OUT="$SOURCE_DIR/out/target/product/$PRODUCT_NAME"
+          DEST="$RUNNER_TEMP/x6528-artifacts"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          [[ -d "$OUT" ]] || { echo "::error::Output dir not found: $OUT"; exit 1; }
+
+          for f in boot.img vendor_boot.img init_boot.img dtbo.img recovery.img vbmeta.img vbmeta_system.img vendor_dlkm.img; do
+            [[ -f "$OUT/$f" ]] && cp -v "$OUT/$f" "$DEST/" || true
+          done
+          find "$OUT" -maxdepth 1 -type f -name 'lineage-*.zip' -exec cp -v {} "$DEST/" \;
+          find "$OUT" -maxdepth 1 -type f -name '*-ota.zip' -exec cp -v {} "$DEST/" \;
+
+          echo "Collected artifacts:"
+          ls -lh "$DEST"
+
+      - name: Upload artifacts
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x6528-build-output
+          path: ${{ runner.temp }}/x6528-artifacts/*
+          if-no-files-found: warn
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: x6528-build-log
+          path: /tmp/x6528-build.log
+          if-no-files-found: ignore
+
+
