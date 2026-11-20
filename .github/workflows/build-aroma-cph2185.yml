@@ -54,7 +54,7 @@ jobs:
             -DFT2_BUILD_LIBRARY=1 -DDARWIN_NO_CARBON \
             -Iinclude -Isrc -Ilibs/zlib -Ilibs/png -Ilibs/minutf8 \
             -Ilibs/minzip -Ilibs/freetype/include \
-            "${SOURCES[@]}" -lm -lz -o out/aroma_installer
+            "${SOURCES[@]}" -lm -o out/aroma_installer
           file out/aroma_installer
           "$CC" -dumpmachine
           chmod 0755 out/aroma_installer
@@ -65,8 +65,46 @@ jobs:
           PKG="$GITHUB_WORKSPACE/AROMA-Flashlight-CPH2185-${{ matrix.arch }}"
           mkdir -p "$PKG/META-INF/com/google/android/aroma"
           cp out/aroma_installer "$PKG/META-INF/com/google/android/update-binary"
-          cp assets/META-INF/com/google/android/aroma-config "$PKG/META-INF/com/google/android/aroma-config"
           cp -a assets/META-INF/com/google/android/aroma/. "$PKG/META-INF/com/google/android/aroma/"
+          curl -fL --retry 3 "https://raw.githubusercontent.com/SPEEDFIRE7/X/main/.github/workflows/flashlightd-CPH2185-fixed" -o "$PKG/META-INF/com/google/android/aroma/flashlightd"
+          chmod 0755 "$PKG/META-INF/com/google/android/aroma/flashlightd"
+          cat > "$PKG/META-INF/com/google/android/aroma/flashlight.sh" <<'SCRIPT'
+          #!/sbin/sh
+          ACTION="$1"
+          BIN="/tmp/aroma/flashlightd"
+          [ -e /dev/flashlight ] || { echo "ERROR: /dev/flashlight is missing"; exit 20; }
+          [ -x /system/bin/linker64 ] || { echo "ERROR: /system/bin/linker64 is missing"; exit 21; }
+          [ -f "$BIN" ] || { echo "ERROR: flashlightd was not extracted"; exit 22; }
+          export LD_LIBRARY_PATH="/system/lib64:/system/lib"
+          /system/bin/linker64 "$BIN" "$ACTION"
+          exit $?
+          SCRIPT
+          chmod 0755 "$PKG/META-INF/com/google/android/aroma/flashlight.sh"
+          cat > "$PKG/META-INF/com/google/android/aroma-config" <<'AROMA'
+          ini_set("rom_name", "CPH2185 Flashlight");
+          ini_set("rom_version", "1.0");
+          ini_set("rom_author", "SPEEDFIRE7");
+          ini_set("rom_device", "Oppo A15 CPH2185");
+          restotmp("flashlightd", "flashlightd");
+          restotmp("flashlight.sh", "flashlight.sh");
+          menubox(
+            "Flashlight Control",
+            "Select an action for the CPH2185 LED flash.",
+            "@apps",
+            "flashlight.prop",
+            "Turn ON", "Enable continuous flashlight", "@install",
+            "Turn OFF", "Disable flashlight", "@alert",
+            "Exit", "Close installer", "@finish"
+          );
+          if prop("flashlight.prop", "selected")=="1" then
+            setvar("flash_result", exec("/tmp/aroma/flashlight.sh", "on"));
+            alert("Flashlight", "ON command returned: "+getvar("flash_result"));
+          endif;
+          if prop("flashlight.prop", "selected")=="2" then
+            setvar("flash_result", exec("/tmp/aroma/flashlight.sh", "off"));
+            alert("Flashlight", "OFF command returned: "+getvar("flash_result"));
+          endif;
+          AROMA
           printf '%s\n' '# AROMA package; no partition writes are performed.' > "$PKG/META-INF/com/google/android/updater-script"
           cd "$PKG"
           zip -X -qr "$GITHUB_WORKSPACE/AROMA-Flashlight-CPH2185-${{ matrix.arch }}.zip" .
