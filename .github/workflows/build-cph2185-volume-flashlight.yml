@@ -1,10 +1,11 @@
-name: Build CPH2185 Volume-Key Flashlight ZIP
+name: Build CPH2185 Flashlight ON and OFF ZIPs
 
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/build-cph2185-volume-flashlight.yml'
+      - '.github/workflows/flashlightd-CPH2185-fixed'
 
 permissions:
   contents: read
@@ -13,16 +14,21 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - name: Create flashable ZIP
+      - name: Build ON and OFF recovery ZIPs
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p pkg/META-INF/com/google/android pkg/tools
-          curl -fL --retry 3 'https://raw.githubusercontent.com/SPEEDFIRE7/X/main/.github/workflows/flashlightd-CPH2185-fixed' -o pkg/tools/flashlightd
-          file pkg/tools/flashlightd
-          chmod 0755 pkg/tools/flashlightd
-          cat > pkg/META-INF/com/google/android/update-binary <<'SCRIPT'
+          mkdir -p build/on/META-INF/com/google/android build/on/tools
+          mkdir -p build/off/META-INF/com/google/android build/off/tools
+
+          curl -fL --retry 3 'https://raw.githubusercontent.com/SPEEDFIRE7/X/main/.github/workflows/flashlightd-CPH2185-fixed' -o build/on/tools/flashlightd
+          cp build/on/tools/flashlightd build/off/tools/flashlightd
+          chmod 0755 build/on/tools/flashlightd build/off/tools/flashlightd
+          file build/on/tools/flashlightd
+
+          cat > build/on/META-INF/com/google/android/update-binary <<'ON_SCRIPT'
           #!/sbin/sh
-          # Recovery installer protocol: $1=API, $2=OUTFD, $3=ZIP path.
+          # Starts the flashlight daemon and exits immediately.
           OUTFD="$2"
           ZIPFILE="$3"
           ui_print() {
@@ -33,92 +39,161 @@ jobs:
             echo "$1"
           }
           fail() { ui_print "ERROR: $1"; exit 1; }
+
           DEVICE="$(getprop ro.product.device 2>/dev/null | tr '[:upper:]' '[:lower:]')"
           [ "$DEVICE" = "cph2185" ] || ui_print "WARNING: device codename is '$DEVICE'; expected cph2185."
-          [ -n "$ZIPFILE" ] && [ -f "$ZIPFILE" ] || fail "Recovery did not pass a valid ZIP path."
-          GETEVENT="$(command -v getevent 2>/dev/null || true)"
-          [ -n "$GETEVENT" ] || [ -x /system/bin/getevent ] || [ -x /sbin/getevent ] || fail "getevent is missing in this recovery."
+
+          [ -n "$ZIPFILE" ] && [ -f "$ZIPFILE" ] || fail "Invalid installer ZIP path."
           [ -e /dev/flashlight ] || fail "/dev/flashlight is missing in this recovery."
+
           LINKER=""
-          for p in /system/bin/linker64 /sbin/linker64; do [ -x "$p" ] && LINKER="$p" && break; done
-          [ -n "$LINKER" ] || fail "64-bit linker is missing in recovery."
-          DAEMON="/tmp/flashlightd-cph2185"
-          rm -f "$DAEMON"
-          if command -v unzip >/dev/null 2>&1; then
-            unzip -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
-          elif command -v busybox >/dev/null 2>&1; then
-            busybox unzip -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
-          else
-            fail "No unzip utility is available to extract flashlightd."
-          fi
-          [ -s "$DAEMON" ] || fail "flashlightd payload is missing or empty in ZIP (expected tools/flashlightd)."
-          chmod 0755 "$DAEMON" || fail "Cannot make flashlightd executable."
-          export LD_LIBRARY_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
-          EVENT_DEVICE="/dev/input/event1"
-          [ -r "$EVENT_DEVICE" ] || fail "Volume-key input device $EVENT_DEVICE is missing or unreadable."
-          ui_print "CPH2185 Flashlight controller"
-          ui_print "Input device: mtk-kpd ($EVENT_DEVICE)"
-          AWK="$(command -v awk 2>/dev/null || true)"
-          [ -n "$AWK" ] || fail "awk is missing; cannot detect double POWER press."
-          ui_print "Volume UP = ON | Volume DOWN = OFF"
-          ui_print "Double-tap POWER within 1 second = EXIT controller"
-          "$LINKER" "$DAEMON" daemon >/dev/null 2>&1 &
-          DAEMON_PID=$!
-          sleep 1
-          "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
-          ui_print "Listening on $EVENT_DEVICE..."
-          "$GETEVENT" -lt "$EVENT_DEVICE" 2>/dev/null | "$AWK" '
-            $3 == "EV_KEY" && $4 == "KEY_VOLUMEUP" && $5 == "DOWN" { print "ON"; fflush(); next }
-            $3 == "EV_KEY" && $4 == "KEY_VOLUMEDOWN" && $5 == "DOWN" { print "OFF"; fflush(); next }
-            $3 == "EV_KEY" && $4 == "KEY_POWER" && $5 == "DOWN" {
-              t=$2; gsub(/\\]/, "", t)
-              if (last_power != "" && (t-last_power) >= 0 && (t-last_power) <= 1.0) {
-                print "EXIT"; fflush(); exit
-              }
-              last_power=t
-            }
-          ' | while IFS= read -r action; do
-            case "$action" in
-              ON)
-                "$LINKER" "$DAEMON" on >/dev/null 2>&1 && ui_print "Flashlight: ON" || ui_print "ERROR: ON command failed"
-                ;;
-              OFF)
-                "$LINKER" "$DAEMON" off >/dev/null 2>&1 && ui_print "Flashlight: OFF" || ui_print "ERROR: OFF command failed"
-                ;;
-              EXIT)
-                ui_print "Double POWER press detected. Stopping controller..."
-                break
-                ;;
-            esac
+          for p in /system/bin/linker64 /sbin/linker64; do
+            [ -x "$p" ] && LINKER="$p" && break
           done
+          [ -n "$LINKER" ] || fail "64-bit linker is missing in recovery."
+
+          if command -v unzip >/dev/null 2>&1; then
+            UNZIP="$(command -v unzip)"
+          elif command -v busybox >/dev/null 2>&1; then
+            UNZIP="busybox unzip"
+          else
+            fail "No unzip utility is available."
+          fi
+
+          mkdir -p /tmp/FFiles || fail "Cannot create /tmp/FFiles."
+          DAEMON="/tmp/FFiles/flashlightd"
+          rm -f "$DAEMON"
+          $UNZIP -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
+          [ -s "$DAEMON" ] || fail "flashlightd payload is missing."
+          chmod 0755 "$DAEMON" || fail "Cannot chmod flashlightd."
+
+          export LD_LIBRARY_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
+          "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
+          "$LINKER" "$DAEMON" stop >/dev/null 2>&1 || true
+
+          # Detach the daemon from this short-lived installer when nohup exists.
+          if command -v nohup >/dev/null 2>&1; then
+            nohup "$LINKER" "$DAEMON" daemon </dev/null >/tmp/FFiles/daemon.log 2>&1 &
+          else
+            "$LINKER" "$DAEMON" daemon </dev/null >/tmp/FFiles/daemon.log 2>&1 &
+          fi
+          DAEMON_PID=$!
+          echo "$DAEMON_PID" > /tmp/FFiles/daemon.pid
+          sleep 1
+
+          if "$LINKER" "$DAEMON" on >/dev/null 2>&1; then
+            ui_print "Flashlight daemon started; flashlight is ON."
+            ui_print "Installer is exiting now. You can flash other ZIPs."
+            exit 0
+          fi
+
+          ui_print "ERROR: flashlight ON command failed; stopping daemon."
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
           "$LINKER" "$DAEMON" stop >/dev/null 2>&1 || true
           kill "$DAEMON_PID" 2>/dev/null || true
-          ui_print "Flashlight controller stopped. Returning to recovery."
+          rm -f /tmp/FFiles/daemon.pid
+          exit 1
+          ON_SCRIPT
+          chmod 0755 build/on/META-INF/com/google/android/update-binary
+          cat > build/on/META-INF/com/google/android/updater-script <<'EOF'
+          # Oppo A15 CPH2185: start flashlight daemon and exit.
+          # No partition formatting or writing commands.
+          EOF
+          cat > build/on/README.txt <<'EOF'
+          CPH2185 Flashlight ON
+          Installs the daemon into /tmp/FFiles, starts it in the background,
+          turns the flashlight on, then exits immediately.
+          You can use OrangeFox and flash other ZIPs while the light is on.
+          Install Flashlight-OFF.zip to turn the light off and stop the daemon.
+          Recovery reboot clears /tmp and ends this temporary daemon session.
+          No partitions are formatted or written.
+          EOF
+
+          cat > build/off/META-INF/com/google/android/update-binary <<'OFF_SCRIPT'
+          #!/sbin/sh
+          # Turns the flashlight off and stops the background daemon.
+          OUTFD="$2"
+          ZIPFILE="$3"
+          ui_print() {
+            if [ -n "${OUTFD:-}" ] && [ -e "/proc/self/fd/$OUTFD" ]; then
+              echo "ui_print $1" > "/proc/self/fd/$OUTFD"
+              echo "ui_print" > "/proc/self/fd/$OUTFD"
+            fi
+            echo "$1"
+          }
+          fail() { ui_print "ERROR: $1"; exit 1; }
+
+          DEVICE="$(getprop ro.product.device 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+          [ "$DEVICE" = "cph2185" ] || ui_print "WARNING: device codename is '$DEVICE'; expected cph2185."
+
+          [ -n "$ZIPFILE" ] && [ -f "$ZIPFILE" ] || fail "Invalid installer ZIP path."
+          [ -e /dev/flashlight ] || fail "/dev/flashlight is missing in this recovery."
+
+          LINKER=""
+          for p in /system/bin/linker64 /sbin/linker64; do
+            [ -x "$p" ] && LINKER="$p" && break
+          done
+          [ -n "$LINKER" ] || fail "64-bit linker is missing in recovery."
+
+          if command -v unzip >/dev/null 2>&1; then
+            UNZIP="$(command -v unzip)"
+          elif command -v busybox >/dev/null 2>&1; then
+            UNZIP="busybox unzip"
+          else
+            fail "No unzip utility is available."
+          fi
+
+          mkdir -p /tmp/FFiles || fail "Cannot create /tmp/FFiles."
+          DAEMON="/tmp/FFiles/flashlightd-off"
+          rm -f "$DAEMON"
+          $UNZIP -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
+          [ -s "$DAEMON" ] || fail "flashlightd payload is missing."
+          chmod 0755 "$DAEMON" || fail "Cannot chmod flashlightd."
+
+          export LD_LIBRARY_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
+          "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
+          "$LINKER" "$DAEMON" stop >/dev/null 2>&1 || true
+
+          if [ -s /tmp/FFiles/daemon.pid ]; then
+            DAEMON_PID="$(cat /tmp/FFiles/daemon.pid 2>/dev/null)"
+            case "$DAEMON_PID" in
+              ''|*[!0-9]*) ui_print "Ignoring invalid daemon PID file." ;;
+              *) kill "$DAEMON_PID" 2>/dev/null || true ;;
+            esac
+          fi
+          rm -f /tmp/FFiles/daemon.pid /tmp/FFiles/flashlightd
+          ui_print "Flashlight is OFF; daemon stop requested."
+          ui_print "You can continue using OrangeFox."
           exit 0
-          SCRIPT
-          chmod 0755 pkg/META-INF/com/google/android/update-binary
-          cat > pkg/META-INF/com/google/android/updater-script <<'EOF'
-          # Volume-key flashlight controller for Oppo A15 CPH2185.
-          # No partition-writing commands are included.
+          OFF_SCRIPT
+          chmod 0755 build/off/META-INF/com/google/android/update-binary
+          cat > build/off/META-INF/com/google/android/updater-script <<'EOF'
+          # Oppo A15 CPH2185: stop flashlight daemon.
+          # No partition formatting or writing commands.
           EOF
-          cat > pkg/README.txt <<'EOF'
-          Oppo A15 CPH2185 - Volume Key Flashlight ZIP
-          Volume UP: turn flashlight ON
-          Volume DOWN: turn flashlight OFF
-          This package does not write or repartition storage partitions.
-          Experimental: requires getevent, /dev/flashlight, linker64 and
-          compatible flashlightd runtime dependencies in recovery.
+          cat > build/off/README.txt <<'EOF'
+          CPH2185 Flashlight OFF
+          Turns the flashlight off, sends the daemon stop command,
+          and removes the temporary PID/state files.
+          No partitions are formatted or written.
           EOF
-          (cd pkg && zip -X -qr ../CPH2185-Volume-Flashlight.zip .)
-          unzip -l CPH2185-Volume-Flashlight.zip
-          unzip -p CPH2185-Volume-Flashlight.zip tools/flashlightd > /tmp/flashlightd
-          cmp pkg/tools/flashlightd /tmp/flashlightd
-          file /tmp/flashlightd
-      - name: Upload ZIP artifact
+
+          (cd build/on && zip -X -qr ../../Flashlight-ON.zip .)
+          (cd build/off && zip -X -qr ../../Flashlight-OFF.zip .)
+          unzip -t Flashlight-ON.zip
+          unzip -t Flashlight-OFF.zip
+          unzip -p Flashlight-ON.zip tools/flashlightd > /tmp/daemon-on
+          unzip -p Flashlight-OFF.zip tools/flashlightd > /tmp/daemon-off
+          cmp /tmp/daemon-on /tmp/daemon-off
+          file /tmp/daemon-on
+          ls -lh Flashlight-ON.zip Flashlight-OFF.zip
+
+      - name: Upload ON and OFF ZIPs
         uses: actions/upload-artifact@v4
         with:
-          name: CPH2185-Volume-Flashlight
-          path: CPH2185-Volume-Flashlight.zip
+          name: CPH2185-Flashlight-ON-OFF
+          path: |
+            Flashlight-ON.zip
+            Flashlight-OFF.zip
           if-no-files-found: error
           retention-days: 30
