@@ -54,20 +54,21 @@ jobs:
           [ -s "$DAEMON" ] || fail "flashlightd payload is missing or empty in ZIP (expected tools/flashlightd)."
           chmod 0755 "$DAEMON" || fail "Cannot make flashlightd executable."
           export LD_LIBRARY_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
+          EVENT_DEVICE="/dev/input/event1"
+          [ -r "$EVENT_DEVICE" ] || fail "Volume-key input device $EVENT_DEVICE is missing or unreadable."
           ui_print "CPH2185 Flashlight controller"
+          ui_print "Input device: mtk-kpd ($EVENT_DEVICE)"
           ui_print "Volume UP = ON | Volume DOWN = OFF"
           "$LINKER" "$DAEMON" daemon >/dev/null 2>&1 &
           sleep 1
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
-          GE="${GETEVENT:-}"
-          [ -n "$GE" ] || { [ -x /system/bin/getevent ] && GE=/system/bin/getevent || GE=/sbin/getevent; }
-          ui_print "Listening for volume-key events..."
-          "$GE" -l -t /dev/input/event* 2>/dev/null | while IFS= read -r line; do
+          ui_print "Listening for volume-key events on $EVENT_DEVICE..."
+          "$GE" -lt "$EVENT_DEVICE" 2>/dev/null | while IFS= read -r line; do
             case "$line" in
-              *KEY_VOLUMEUP*DOWN*)
+              *EV_KEY*KEY_VOLUMEUP*DOWN*)
                 "$LINKER" "$DAEMON" on >/dev/null 2>&1 && ui_print "Flashlight: ON" || ui_print "ERROR: ON command failed"
                 ;;
-              *KEY_VOLUMEDOWN*DOWN*)
+              *EV_KEY*KEY_VOLUMEDOWN*DOWN*)
                 "$LINKER" "$DAEMON" off >/dev/null 2>&1 && ui_print "Flashlight: OFF" || ui_print "ERROR: OFF command failed"
                 ;;
             esac
