@@ -31,9 +31,6 @@ jobs:
           test -s aroma-src/assets/META-INF/com/google/android/aroma-config
 
       - name: Compile static AROMA update-binary
-        env:
-          CC: ${{ matrix.compiler }}
-          ARCH_FLAGS: ${{ matrix.flags }}
         run: |
           cd aroma-src
           flex -o src/edify/lex.yy.c src/edify/lexer.l
