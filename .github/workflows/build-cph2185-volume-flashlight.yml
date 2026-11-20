@@ -58,22 +58,43 @@ jobs:
           [ -r "$EVENT_DEVICE" ] || fail "Volume-key input device $EVENT_DEVICE is missing or unreadable."
           ui_print "CPH2185 Flashlight controller"
           ui_print "Input device: mtk-kpd ($EVENT_DEVICE)"
+          AWK="$(command -v awk 2>/dev/null || true)"
+          [ -n "$AWK" ] || fail "awk is missing; cannot detect double POWER press."
           ui_print "Volume UP = ON | Volume DOWN = OFF"
+          ui_print "Double-tap POWER within 1 second = EXIT controller"
           "$LINKER" "$DAEMON" daemon >/dev/null 2>&1 &
+          DAEMON_PID=$!
           sleep 1
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
-          ui_print "Listening for volume-key events on $EVENT_DEVICE..."
-          "$GETEVENT" -lt "$EVENT_DEVICE" 2>/dev/null | while IFS= read -r line; do
-            case "$line" in
-              *EV_KEY*KEY_VOLUMEUP*DOWN*)
+          ui_print "Listening on $EVENT_DEVICE..."
+          "$GETEVENT" -lt "$EVENT_DEVICE" 2>/dev/null | "$AWK" '
+            $3 == "EV_KEY" && $4 == "KEY_VOLUMEUP" && $5 == "DOWN" { print "ON"; fflush(); next }
+            $3 == "EV_KEY" && $4 == "KEY_VOLUMEDOWN" && $5 == "DOWN" { print "OFF"; fflush(); next }
+            $3 == "EV_KEY" && $4 == "KEY_POWER" && $5 == "DOWN" {
+              t=$2; gsub(/\\]/, "", t)
+              if (last_power != "" && (t-last_power) >= 0 && (t-last_power) <= 1.0) {
+                print "EXIT"; fflush(); exit
+              }
+              last_power=t
+            }
+          ' | while IFS= read -r action; do
+            case "$action" in
+              ON)
                 "$LINKER" "$DAEMON" on >/dev/null 2>&1 && ui_print "Flashlight: ON" || ui_print "ERROR: ON command failed"
                 ;;
-              *EV_KEY*KEY_VOLUMEDOWN*DOWN*)
+              OFF)
                 "$LINKER" "$DAEMON" off >/dev/null 2>&1 && ui_print "Flashlight: OFF" || ui_print "ERROR: OFF command failed"
+                ;;
+              EXIT)
+                ui_print "Double POWER press detected. Stopping controller..."
+                break
                 ;;
             esac
           done
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
+          "$LINKER" "$DAEMON" stop >/dev/null 2>&1 || true
+          kill "$DAEMON_PID" 2>/dev/null || true
+          ui_print "Flashlight controller stopped. Returning to recovery."
           exit 0
           SCRIPT
           chmod 0755 pkg/META-INF/com/google/android/update-binary
