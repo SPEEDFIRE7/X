@@ -22,7 +22,9 @@ jobs:
           chmod 0755 pkg/tools/flashlightd
           cat > pkg/META-INF/com/google/android/update-binary <<'SCRIPT'
           #!/sbin/sh
-          # CPH2185 volume-key flashlight controller; no partitions are modified.
+          # Recovery installer protocol: $1=API, $2=OUTFD, $3=ZIP path.
+          OUTFD="$2"
+          ZIPFILE="$3"
           ui_print() {
             if [ -n "${OUTFD:-}" ] && [ -e "/proc/self/fd/$OUTFD" ]; then
               echo "ui_print $1" > "/proc/self/fd/$OUTFD"
@@ -31,26 +33,35 @@ jobs:
             echo "$1"
           }
           fail() { ui_print "ERROR: $1"; exit 1; }
-          [ "$(getprop ro.product.device 2>/dev/null)" = "CPH2185" ] || ui_print "WARNING: device codename is not CPH2185; continuing only if this is your Oppo A15."
+          DEVICE="$(getprop ro.product.device 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+          [ "$DEVICE" = "cph2185" ] || ui_print "WARNING: device codename is '$DEVICE'; expected cph2185."
+          [ -n "$ZIPFILE" ] && [ -f "$ZIPFILE" ] || fail "Recovery did not pass a valid ZIP path."
           GETEVENT="$(command -v getevent 2>/dev/null || true)"
-          [ -n "$GETEVENT" ] || [ -x /system/bin/getevent ] || [ -x /sbin/getevent ] || fail "getevent is missing in this recovery; cannot safely read volume keys."
-          [ -e /dev/flashlight ] || fail "/dev/flashlight is missing. This recovery does not expose the CPH2185 flashlight driver."
+          [ -n "$GETEVENT" ] || [ -x /system/bin/getevent ] || [ -x /sbin/getevent ] || fail "getevent is missing in this recovery."
+          [ -e /dev/flashlight ] || fail "/dev/flashlight is missing in this recovery."
           LINKER=""
           for p in /system/bin/linker64 /sbin/linker64; do [ -x "$p" ] && LINKER="$p" && break; done
-          [ -n "$LINKER" ] || fail "64-bit Android linker is missing in recovery."
-          BASE="$(dirname "$0")/../../../.."
-          DAEMON="$BASE/tools/flashlightd"
-          [ -f "$DAEMON" ] || fail "flashlightd payload not found in ZIP."
-          chmod 0755 "$DAEMON"
+          [ -n "$LINKER" ] || fail "64-bit linker is missing in recovery."
+          DAEMON="/tmp/flashlightd-cph2185"
+          rm -f "$DAEMON"
+          if command -v unzip >/dev/null 2>&1; then
+            unzip -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
+          elif command -v busybox >/dev/null 2>&1; then
+            busybox unzip -p "$ZIPFILE" tools/flashlightd > "$DAEMON" 2>/dev/null
+          else
+            fail "No unzip utility is available to extract flashlightd."
+          fi
+          [ -s "$DAEMON" ] || fail "flashlightd payload is missing or empty in ZIP (expected tools/flashlightd)."
+          chmod 0755 "$DAEMON" || fail "Cannot make flashlightd executable."
           export LD_LIBRARY_PATH="/system/lib64:/system/lib:/vendor/lib64:/vendor/lib"
           ui_print "CPH2185 Flashlight controller"
           ui_print "Volume UP = ON | Volume DOWN = OFF"
-          ui_print "Press and hold no buttons during startup; this installer will stay active until recovery terminates it."
           "$LINKER" "$DAEMON" daemon >/dev/null 2>&1 &
           sleep 1
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
           GE="${GETEVENT:-}"
           [ -n "$GE" ] || { [ -x /system/bin/getevent ] && GE=/system/bin/getevent || GE=/sbin/getevent; }
+          ui_print "Listening for volume-key events..."
           "$GE" -l -t /dev/input/event* 2>/dev/null | while IFS= read -r line; do
             case "$line" in
               *KEY_VOLUMEUP*DOWN*)
@@ -67,16 +78,15 @@ jobs:
           chmod 0755 pkg/META-INF/com/google/android/update-binary
           cat > pkg/META-INF/com/google/android/updater-script <<'EOF'
           # Volume-key flashlight controller for Oppo A15 CPH2185.
-          # No boot, system, vendor, userdata or partition flashing commands.
+          # No partition-writing commands are included.
           EOF
           cat > pkg/README.txt <<'EOF'
           Oppo A15 CPH2185 - Volume Key Flashlight ZIP
           Volume UP: turn flashlight ON
           Volume DOWN: turn flashlight OFF
-          This package does not write or repartition any storage partitions.
-          It requires a recovery with getevent, /dev/flashlight, linker64,
-          and the CPH2185-compatible flashlightd runtime dependencies.
-          The package is experimental and has not been device-tested.
+          This package does not write or repartition storage partitions.
+          Experimental: requires getevent, /dev/flashlight, linker64 and
+          compatible flashlightd runtime dependencies in recovery.
           EOF
           (cd pkg && zip -X -qr ../CPH2185-Volume-Flashlight.zip .)
           unzip -l CPH2185-Volume-Flashlight.zip
