@@ -1,0 +1,81 @@
+name: Build AROMA Installer for CPH2185
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: armv7
+            compiler: arm-linux-gnueabihf-gcc
+            packages: gcc-arm-linux-gnueabihf
+            flags: -march=armv7-a -mfpu=neon -mfloat-abi=softfp
+          - arch: arm64
+            compiler: aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+            flags: -march=armv8-a
+
+    steps:
+      - name: Install cross compilers and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip file ${{ matrix.packages }}
+
+      - name: Fetch official AROMA source
+        run: |
+          git clone --depth=1 https://github.com/amarullz/AROMA-Installer.git aroma-src
+          test -s aroma-src/Android.mk
+          test -s aroma-src/assets/META-INF/com/google/android/aroma-config
+
+      - name: Compile static AROMA update-binary
+        env:
+          CC: ${{ matrix.compiler }}
+          ARCH_FLAGS: ${{ matrix.flags }}
+        run: |
+          cd aroma-src
+          mapfile -t SOURCES < <(find libs/zlib libs/png libs/minutf8 libs/minzip libs/freetype src -type f -name '*.c' | sort)
+          test "${#SOURCES[@]}" -gt 40
+          mkdir -p out
+          "$CC" $ARCH_FLAGS -O2 -static -fno-strict-aliasing \
+            -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            -D_FILE_OFFSET_BITS=64 -D_AROMA_NODEBUG \
+            -DAROMA_NAME='"AROMA Installer"' \
+            -DAROMA_VERSION='"2.70RC2"' \
+            -DAROMA_BUILD='"CPH2185"' \
+            -DAROMA_BUILD_CN='"Flamboyan"' \
+            -DFT2_BUILD_LIBRARY=1 -DDARWIN_NO_CARBON \
+            -Iinclude -Isrc -Ilibs/zlib -Ilibs/png -Ilibs/minutf8 \
+            -Ilibs/minzip -Ilibs/freetype/include \
+            "${SOURCES[@]}" -lm -lz -o out/aroma_installer
+          file out/aroma_installer
+          "$CC" -dumpmachine
+          chmod 0755 out/aroma_installer
+
+      - name: Package AROMA test ZIP
+        run: |
+          cd aroma-src
+          PKG="$GITHUB_WORKSPACE/AROMA-Flashlight-CPH2185-${{ matrix.arch }}"
+          mkdir -p "$PKG/META-INF/com/google/android/aroma"
+          cp out/aroma_installer "$PKG/META-INF/com/google/android/update-binary"
+          cp assets/META-INF/com/google/android/aroma-config "$PKG/META-INF/com/google/android/aroma-config"
+          cp -a assets/META-INF/com/google/android/aroma/. "$PKG/META-INF/com/google/android/aroma/"
+          printf '%s\n' '# AROMA package; no partition writes are performed.' > "$PKG/META-INF/com/google/android/updater-script"
+          cd "$PKG"
+          zip -X -qr "$GITHUB_WORKSPACE/AROMA-Flashlight-CPH2185-${{ matrix.arch }}.zip" .
+          unzip -l "$GITHUB_WORKSPACE/AROMA-Flashlight-CPH2185-${{ matrix.arch }}.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AROMA-Flashlight-CPH2185-${{ matrix.arch }}
+          path: AROMA-Flashlight-CPH2185-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 14
