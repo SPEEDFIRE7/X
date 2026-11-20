@@ -71,12 +71,19 @@ jobs:
           "$LINKER" "$DAEMON" off >/dev/null 2>&1 || true
           "$LINKER" "$DAEMON" stop >/dev/null 2>&1 || true
 
-          # Detach the daemon from this short-lived installer when nohup exists.
-          if command -v nohup >/dev/null 2>&1; then
-            nohup "$LINKER" "$DAEMON" daemon </dev/null >/tmp/FFiles/daemon.log 2>&1 &
-          else
-            "$LINKER" "$DAEMON" daemon </dev/null >/tmp/FFiles/daemon.log 2>&1 &
-          fi
+          # Launch in a subshell with every updater pipe descriptor closed.
+          # In particular, never let the daemon inherit OUTFD (usually fd 3),
+          # otherwise OrangeFox may keep the installer screen open.
+          (
+            exec </dev/null
+            exec >/tmp/FFiles/daemon.log 2>&1
+            exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+            if command -v setsid >/dev/null 2>&1; then
+              exec setsid "$LINKER" "$DAEMON" daemon
+            else
+              exec "$LINKER" "$DAEMON" daemon
+            fi
+          ) &
           DAEMON_PID=$!
           echo "$DAEMON_PID" > /tmp/FFiles/daemon.pid
           sleep 1
