@@ -2,6 +2,9 @@ name: Build AROMA Installer for CPH2185
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-aroma-cph2185.yml'
 
 permissions:
   contents: read
