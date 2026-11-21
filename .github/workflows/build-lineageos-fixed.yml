@@ -1,0 +1,346 @@
+name: Build LineageOS 20 - Infinix X6528
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type (userdebug/user/eng)'
+        required: true
+        default: 'userdebug'
+      clean_build:
+        description: 'Clean build? (true/false)'
+        required: true
+        default: 'false'
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: namespace-profile-speed
+    timeout-minutes: 720
+
+    steps:
+      - name: Setup build environment
+        run: |
+          sudo apt-get update -qq
+          # openjdk-11-jdk lives in universe on Ubuntu 24.04/26.04.
+          # Minimal runner images sometimes ship with only "main" enabled.
+          if apt-cache policy openjdk-11-jdk | grep -q 'Candidate: (none)'; then
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
+            sudo add-apt-repository -y universe
+            sudo apt-get update -qq
+          fi
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf imagemagick \
+            lib32readline-dev lib32z1-dev lz4 \
+            libncurses-dev libsdl1.2-dev libssl-dev \
+            libxml2-dev libxml2-utils lzop pngcrush rsync schedtool \
+            squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python3-pip openjdk-11-jdk repo git-lfs pigz
+          pip3 install --upgrade pip --break-system-packages
+
+          # Ubuntu 26.04 defaults to a much newer JDK, but LineageOS 20
+          # requires JDK 11. Pin it for every later step.
+          echo "JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64" >> $GITHUB_ENV
+          echo "PATH=/usr/lib/jvm/java-11-openjdk-amd64/bin:$PATH" >> $GITHUB_ENV
+          /usr/lib/jvm/java-11-openjdk-amd64/bin/java -version
+
+      - name: Configure git
+        run: |
+          git config --global user.email "build@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global color.ui false
+
+      - name: Setup ccache
+        run: |
+          mkdir -p ~/.ccache
+          ccache -M 50G
+          ccache -o compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+          echo "USE_CCACHE=1" >> $GITHUB_ENV
+          echo "CCACHE_EXEC=$(which ccache)" >> $GITHUB_ENV
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-lineage20-x6528-${{ github.run_id }}
+          restore-keys: |
+            ccache-lineage20-x6528-
+
+      - name: Initialize LineageOS 20 repo
+        run: |
+          mkdir -p ~/android/lineage
+          cd ~/android/lineage
+          repo init \
+            --depth=1 \
+            -u https://github.com/LineageOS/android.git \
+            -b lineage-20.0 \
+            --git-lfs
+
+      - name: Create local manifests
+        run: |
+          mkdir -p ~/android/lineage/.repo/local_manifests
+          cat > ~/android/lineage/.repo/local_manifests/x6528.xml << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <project name="SPEEDFIRE7/android_device_infinix_X6528"
+                     path="device/infinix/X6528"
+                     remote="github"
+                     revision="lineage-20" />
+          </manifest>
+          EOF
+
+      - name: Sync sources
+        run: |
+          cd ~/android/lineage
+          repo sync \
+            --current-branch \
+            --no-clone-bundle \
+            --no-tags \
+            --optimized-fetch \
+            -j$(nproc --all) \
+            2>&1 | tee /tmp/sync.log || true
+          [ -d "device/infinix/X6528" ] || (echo "device tree missing!" && exit 1)
+
+      - name: Fix duplicate modules in Android.bp
+        run: |
+          BP="$HOME/android/lineage/device/infinix/X6528/rootdir/Android.bp"
+          python3 - "$BP" << 'PYEOF'
+          import sys, re
+          path = sys.argv[1]
+          with open(path, "r") as f:
+              content = f.read()
+          pattern = re.compile(r'prebuilt_etc\s*\{[^}]*\}', re.DOTALL)
+          matches = list(pattern.finditer(content))
+          seen = set()
+          to_remove = []
+          for m in reversed(matches):
+              name_match = re.search(r'name:\s*"([^"]+)"', m.group(0))
+              if not name_match:
+                  continue
+              name = name_match.group(1)
+              if name in seen:
+                  to_remove.append((m.start(), m.end()))
+                  print(f"Removed duplicate: {name}")
+              else:
+                  seen.add(name)
+          result = list(content)
+          for start, end in to_remove:
+              for i in range(start, end):
+                  result[i] = ""
+          content = "".join(result)
+          with open(path, "w") as f:
+              f.write(content)
+          print("Done. No more duplicates.")
+          PYEOF
+
+      - name: Use prebuilt kernel (no kernel source)
+        run: |
+          DEVICE="$HOME/android/lineage/device/infinix/X6528"
+          echo "Using prebuilt kernel from the device tree:"
+          ls -lh "$DEVICE/prebuilts/kernel" \
+                 "$DEVICE/prebuilts/dtb.img" \
+                 "$DEVICE/prebuilts/dtbo.img"
+          # BoardConfig sets TARGET_FORCE_PREBUILT_KERNEL := true.
+          # Make sure no kernel source dir is synced, otherwise LineageOS
+          # auto-detects it and kernel.mk demands TARGET_KERNEL_CONFIG.
+          rm -rf "$HOME/android/lineage/kernel/infinix/X6528"
+
+      - name: Download vendor blobs from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ~/android/lineage/vendor/infinix/X6528
+          mkdir -p /tmp/vendor_dl
+
+          gh release download vendor-blobs \
+            --repo SPEEDFIRE7/android_vendor_infinix_X6528 \
+            --pattern "vendor_blobs*" \
+            --dir /tmp/vendor_dl
+
+          ls -lh /tmp/vendor_dl/
+
+          if ls /tmp/vendor_dl/vendor_blobs.tar.gz.part_* &>/dev/null; then
+            cat /tmp/vendor_dl/vendor_blobs.tar.gz.part_* > /tmp/vendor_dl/vendor_blobs.tar.gz
+          fi
+
+          tar -I pigz -xf /tmp/vendor_dl/vendor_blobs.tar.gz \
+            -C ~/android/lineage/vendor/infinix/X6528
+
+          ls ~/android/lineage/vendor/infinix/X6528/
+
+      - name: Apply X6528 dedup patch
+        run: |
+          cd ~/android/lineage
+          git apply --verbose <<'PATCH'
+          --- a/device/infinix/X6528/device.mk
+          +++ b/device/infinix/X6528/device.mk
+          @@ -55,7 +55,6 @@
+           PRODUCT_COPY_FILES += \
+               $(LOCAL_PATH)/rootdir/etc/fstab.X6528:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.X6528 \
+               $(LOCAL_PATH)/rootdir/etc/fstab.X6528:$(TARGET_COPY_OUT_RECOVERY)/root/first_stage_ramdisk/fstab.X6528 \
+          -    $(LOCAL_PATH)/rootdir/etc/fstab.X6528:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.X6528 \
+               $(LOCAL_PATH)/rootdir/etc/modules.load:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/modules.load \
+               $(LOCAL_PATH)/rootdir/etc/init.recovery.X6528.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.X6528.rc \
+               $(LOCAL_PATH)/rootdir/etc/ueventd.X6528.rc:$(TARGET_COPY_OUT_RECOVERY)/root/ueventd.X6528.rc \
+          --- a/device/infinix/X6528/Android.mk
+          +++ b/device/infinix/X6528/Android.mk
+          @@ -8,31 +8,11 @@
+           ifeq ($(TARGET_DEVICE),X6528)
+           
+           # Symlinks present in stock /vendor and /odm images
+          -$(call symlink-file,,../egl/libGLES_mali.so,$(TARGET_OUT_VENDOR)/lib/hw/vulkan.ums9230.so)
+          -$(call symlink-file,,../egl/libGLES_mali.so,$(TARGET_OUT_VENDOR)/lib64/hw/vulkan.ums9230.so)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib/libOpenCL.so)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1.1)
+          -$(call symlink-file,,libGLES_mali_cl.so,$(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1.2)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib64/libOpenCL.so)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1)
+          -$(call symlink-file,,libOpenCL.so.1.2,$(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1.1)
+          -$(call symlink-file,,libGLES_mali_cl.so,$(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1.2)
+           $(call symlink-file,,/vendor/lib/libnpi_rtc.so,$(TARGET_OUT_VENDOR)/lib/npidevice/libnpi_rtc.so)
+           $(call symlink-file,,/vendor/lib/libsensornpi.so,$(TARGET_OUT_VENDOR)/lib/npidevice/libsensornpi.so)
+           $(call symlink-file,,/odm/lib/libcamcalitest.so,$(TARGET_OUT_ODM)/lib/npidevice/libcamcalitest.so)
+           
+           ALL_DEFAULT_INSTALLED_MODULES += \
+          -    $(TARGET_OUT_VENDOR)/lib/hw/vulkan.ums9230.so \
+          -    $(TARGET_OUT_VENDOR)/lib64/hw/vulkan.ums9230.so \
+          -    $(TARGET_OUT_VENDOR)/lib/libOpenCL.so \
+          -    $(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1 \
+          -    $(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1.1 \
+          -    $(TARGET_OUT_VENDOR)/lib/libOpenCL.so.1.2 \
+          -    $(TARGET_OUT_VENDOR)/lib64/libOpenCL.so \
+          -    $(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1 \
+          -    $(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1.1 \
+          -    $(TARGET_OUT_VENDOR)/lib64/libOpenCL.so.1.2 \
+               $(TARGET_OUT_VENDOR)/lib/npidevice/libnpi_rtc.so \
+               $(TARGET_OUT_VENDOR)/lib/npidevice/libsensornpi.so \
+               $(TARGET_OUT_ODM)/lib/npidevice/libcamcalitest.so
+          --- a/device/infinix/X6528/proprietary-files.txt
+          +++ b/device/infinix/X6528/proprietary-files.txt
+          @@ -81,7 +81,6 @@
+           odm/etc/audio/r_submix_audio_policy_configuration.xml
+           odm/etc/audio/usb_audio_policy_configuration.xml
+           vendor/etc/a2dp_audio_policy_configuration.xml
+          -vendor/etc/audio_effects.conf
+           vendor/etc/audio_effects.xml
+           vendor/etc/audio_policy_apm_configuration_configurable.xml
+           vendor/etc/audio_policy_configuration.xml
+          @@ -547,7 +546,6 @@
+           vendor/lib/libcodec2_unisoc_common.so
+           vendor/lib/libcodec2_unisoc_store.so
+           vendor/lib/libsfplugin_ccodec_utils.so
+          -vendor/lib/libstagefright_bufferpool@2.0.1.so
+           vendor/lib/libstagefright_hdcp.so
+           vendor/lib/libstagefright_soft_mjpgdec.so
+           vendor/lib/libstagefright_softomx_plugin.so
+          @@ -555,7 +553,6 @@
+           vendor/lib64/libcodec2_unisoc_common.so
+           vendor/lib64/libcodec2_unisoc_store.so
+           vendor/lib64/libsfplugin_ccodec_utils.so
+          -vendor/lib64/libstagefright_bufferpool@2.0.1.so
+           vendor/lib64/libstagefright_hdcp.so
+           vendor/lib64/libstagefrighthw.so
+           odm/etc/media_codecs_c2_secure.xml
+          PATCH
+
+      - name: Fix duplicate VINTF fragment rules
+        run: |
+          cd ~/android/lineage
+          python3 - <<'PYEOF'
+          # LineageOS 20 still creates Make copy rules for Soong modules that
+          # declare vintf_fragments. Newer AOSP skips this for SOONG_ANDROID_MK.
+          # Without this guard, the Soong install rule and the Make rule both
+          # define vendor/etc/vintf/manifest/*.xml -> "overriding commands".
+          path = "build/make/core/base_rules.mk"
+          s = open(path).read()
+          marker = "ifneq ($(LOCAL_MODULE_MAKEFILE),$(SOONG_ANDROID_MK))\n        my_vintf_new_installed"
+          if marker in s:
+              print("base_rules.mk already patched")
+              raise SystemExit(0)
+          old = "\n".join([
+              "      my_vintf_new_pairs := $(filter-out $(ALL_VINTF_MANIFEST_FRAGMENTS_LIST),$(my_vintf_pairs))",
+              "      my_vintf_new_installed := $(call copy-many-vintf-manifest-files-checked,$(my_vintf_new_pairs))",
+              "",
+              "      ALL_VINTF_MANIFEST_FRAGMENTS_LIST += $(my_vintf_new_pairs)",
+              "",
+              "      $(my_all_targets) : $(my_vintf_new_installed)",
+              "",
+          ])
+          new = "\n".join([
+              "      my_vintf_new_pairs := $(filter-out $(ALL_VINTF_MANIFEST_FRAGMENTS_LIST),$(my_vintf_pairs))",
+              "      ifneq ($(LOCAL_MODULE_MAKEFILE),$(SOONG_ANDROID_MK))",
+              "        my_vintf_new_installed := $(call copy-many-vintf-manifest-files-checked,$(my_vintf_new_pairs))",
+              "        $(my_all_targets) : $(my_vintf_new_installed)",
+              "      endif",
+              "      ALL_VINTF_MANIFEST_FRAGMENTS_LIST += $(my_vintf_new_pairs)",
+              "",
+          ])
+          if old not in s:
+              raise SystemExit("base_rules.mk pattern not found - check LineageOS branch")
+          open(path, "w").write(s.replace(old, new, 1))
+          print("Patched base_rules.mk: skipped duplicate Make rules for Soong VINTF fragments")
+          PYEOF
+
+      - name: Setup build
+        run: |
+          cd ~/android/lineage
+          source build/envsetup.sh
+          lunch lineage_X6528-${{ github.event.inputs.build_type }}
+
+      - name: Clean if requested
+        if: github.event.inputs.clean_build == 'true'
+        run: |
+          cd ~/android/lineage
+          source build/envsetup.sh
+          lunch lineage_X6528-${{ github.event.inputs.build_type }}
+          make clean
+
+      - name: Build LineageOS
+        run: |
+          cd ~/android/lineage
+          source build/envsetup.sh
+          lunch lineage_X6528-${{ github.event.inputs.build_type }}
+          make bacon -j$(nproc --all) 2>&1 | tee /tmp/build.log
+          ls -lh out/target/product/X6528/*.zip
+
+      - name: Upload ROM to release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd ~/android/lineage
+          ZIP=$(ls out/target/product/X6528/lineage-*.zip 2>/dev/null | head -1)
+          [ -z "$ZIP" ] && echo "No zip found!" && exit 1
+
+          SIZE=$(du -sh "$ZIP" | cut -f1)
+          DATE=$(date +%Y%m%d)
+          TAG="lineage-20-${DATE}"
+
+          gh release create "$TAG" "$ZIP" \
+            --repo SPEEDFIRE7/android_vendor_infinix_X6528 \
+            --title "LineageOS 20 - Infinix X6528 (${DATE})" \
+            --notes "## LineageOS 20 — Infinix Hot 40i (X6528)
+
+          - **Device**: Infinix Hot 40i (X6528)
+          - **Chipset**: Unisoc T606
+          - **Android**: 13 (LineageOS 20)
+          - **Build type**: ${{ github.event.inputs.build_type }}
+          - **Build date**: ${DATE}
+          - **Size**: ${SIZE}
+
+          ### Installation
+          1. Boot to recovery
+          2. Flash the ZIP
+          3. Wipe data if upgrading from stock"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_id }}
+          path: /tmp/build.log
+          retention-days: 7
