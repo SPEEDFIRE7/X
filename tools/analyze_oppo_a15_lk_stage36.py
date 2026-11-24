@@ -105,3 +105,5 @@ summary = [
 ]
 save("SUMMARY.txt", summary)
 print("\n".join(summary))
+
+# Stage 36 explicit push trigger after workflow registration.
