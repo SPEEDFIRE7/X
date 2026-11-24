@@ -50,3 +50,5 @@ for name,va,n in regions:
 save("STATE_HANDLER_STRINGS.txt",refs)
 summary=["Stage 32 read-only boot state dispatcher analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 32 workflow.
