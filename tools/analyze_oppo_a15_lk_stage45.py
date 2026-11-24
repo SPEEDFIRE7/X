@@ -70,3 +70,5 @@ for s in [b"/kp@10010000",b"mediatek,kpd-hw-pwrkey",b"mediatek,kpd-hw-recovery-k
   p+=1
 save("SUMMARY.txt",summary+["No image bytes modified."])
 print("\n".join(summary))
+
+# Trigger after workflow registration.
