@@ -1,0 +1,46 @@
+name: Oppo A15 LK static analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_path:
+        description: "LK image path inside the repository"
+        required: true
+        default: "oppo-a15-signed-test.img"
+      load_base:
+        description: "LK load base address"
+        required: true
+        default: "0x48000000"
+      payload_offset:
+        description: "Image header/prefix size in bytes"
+        required: true
+        default: "0x200"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install analysis dependency
+        run: python -m pip install --disable-pip-version-check capstone
+      - name: Analyze LK (read-only)
+        env:
+          IMAGE_PATH: ${{ inputs.image_path }}
+          LOAD_BASE: ${{ inputs.load_base }}
+          PAYLOAD_OFFSET: ${{ inputs.payload_offset }}
+        run: python tools/analyze_oppo_a15_lk.py
+      - name: Upload analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: oppo-a15-lk-static-analysis
+          path: lk-analysis/
+          if-no-files-found: error
+          retention-days: 14
