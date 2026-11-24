@@ -36,9 +36,10 @@ targets=set(strings)
 def read32(va):
  off=va-BASE
  return struct.unpack_from("<I",data,off)[0] if 0<=off<=len(data)-4 else None
+thumb_md=Cs(CS_ARCH_ARM,CS_MODE_THUMB|CS_MODE_LITTLE_ENDIAN); thumb_md.detail=True
+arm_md=Cs(CS_ARCH_ARM,CS_MODE_ARM|CS_MODE_LITTLE_ENDIAN); arm_md.detail=True
 def insn_at(off,mode):
- cm=(CS_MODE_THUMB if mode=="thumb" else CS_MODE_ARM)|CS_MODE_LITTLE_ENDIAN
- md=Cs(CS_ARCH_ARM,cm); md.detail=True
+ md=thumb_md if mode=="thumb" else arm_md
  return next(md.disasm(data[off:off+4],BASE+off,count=1),None)
 hits=[]; pointer_hits=[]; decoded=0
 # Exact absolute pointers in aligned data words.
@@ -46,10 +47,8 @@ for off in range(0,len(data)-3,4):
  v=struct.unpack_from("<I",data,off)[0]
  if v in targets: pointer_hits.append((BASE+off,v))
 # Scan halfword-aligned Thumb candidates. Only report exact reconstructed target.
-thumb_ins={}
-for off in range(0,len(data)-3,2):
- ins=insn_at(off,"thumb")
- if ins: thumb_ins[off]=ins; decoded+=1
+thumb_ins={ins.address-BASE:ins for ins in thumb_md.disasm(data,BASE)}
+decoded=len(thumb_ins)
 for off,ins in thumb_ins.items():
  m=ins.mnemonic.lower(); ops=ins.operands; addr=BASE+off
  if m=="adr" and len(ops)>1 and ops[1].type==ARM_OP_IMM and (ops[1].imm&0xffffffff) in targets:
@@ -77,9 +76,8 @@ for off,ins in thumb_ins.items():
     target=((nxt.operands[1].imm&0xffff)<<16)|low
     if target in targets: hits.append(("THUMB",addr,target,"MOVW+MOVT",f"{ins.op_str}; {nxt.op_str}"))
 # ARM 4-byte aligned scan
-for off in range(0,len(data)-3,4):
- ins=insn_at(off,"arm")
- if not ins: continue
+arm_ins={ins.address-BASE:ins for ins in arm_md.disasm(data,BASE)}
+for off,ins in arm_ins.items():
  addr=BASE+off; m=ins.mnemonic.lower(); ops=ins.operands
  if m=="adr" and len(ops)>1 and ops[1].type==ARM_OP_IMM and (ops[1].imm&0xffffffff) in targets:
   v=ops[1].imm&0xffffffff; hits.append(("ARM",addr,v,"ADR",ins.mnemonic+" "+ins.op_str))
@@ -120,3 +118,4 @@ summary=[
 print("\n".join(summary))
 
 # Trigger stage-4 targeted xref workflow.
+\n# Optimized decoder: reuse Capstone engines and linear instruction maps.\n
