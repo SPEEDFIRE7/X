@@ -70,3 +70,5 @@ save("SUMMARY.txt",[
  "No LK image bytes modified."
 ])
 print("\n".join(["Stage 39 complete",f"sha256={sha}",f"parent_r5_base={('0x%08X'%r5base) if r5base else 'unresolved'}"]))
+
+# Trigger after workflow registration.
