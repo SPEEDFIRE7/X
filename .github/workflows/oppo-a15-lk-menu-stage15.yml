@@ -24,7 +24,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check capstone
       - name: Trace menu call graph and strings (read only)
         env:
-          IMAGE_PATH: \${{ inputs.image_path || 'oppo-a15-signed-test.img' }}
+          IMAGE_PATH: ${{ inputs.image_path || 'oppo-a15-signed-test.img' }}
           LOAD_BASE: "0x48000000"
           PAYLOAD_OFFSET: "0x200"
         run: python tools/analyze_oppo_a15_lk_stage15.py
