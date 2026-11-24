@@ -118,3 +118,5 @@ summary=[
 ]
 (OUT/"SUMMARY.txt").write_text("\n".join(summary)+"\n")
 print("\n".join(summary))
+
+# Trigger stage-4 targeted xref workflow.
