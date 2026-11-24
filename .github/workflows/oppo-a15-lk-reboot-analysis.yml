@@ -38,9 +38,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check capstone
       - name: Analyze reboot and key paths (read only)
         env:
-          IMAGE_PATH: ${{ inputs.image_path }}
-          LOAD_BASE: ${{ inputs.load_base }}
-          PAYLOAD_OFFSET: ${{ inputs.payload_offset }}
+          IMAGE_PATH: ${{ inputs.image_path || 'oppo-a15-signed-test.img' }}
+          LOAD_BASE: ${{ inputs.load_base || '0x48000000' }}
+          PAYLOAD_OFFSET: ${{ inputs.payload_offset || '0x200' }}
         run: python tools/analyze_oppo_a15_lk_reboot.py
       - name: Upload analysis report
         uses: actions/upload-artifact@v4
