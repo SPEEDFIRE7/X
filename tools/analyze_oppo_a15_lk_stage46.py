@@ -43,3 +43,5 @@ save("SUMMARY.txt",[
  "No LK image bytes modified."
 ])
 print("\n".join([f"FDT offset=0x{p:X}",f"nodes={len(allnodes)}",f"key_related_props={len(matches)}",f"sha256={sha}"]))
+
+# Trigger after workflow registration.
