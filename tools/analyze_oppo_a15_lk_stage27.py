@@ -53,3 +53,5 @@ for d,n in targets.items():
 save("BOOT_ACTION_CALLERS.txt",rows)
 summary=["Stage 27 read-only boot action and command string analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 27 workflow.
