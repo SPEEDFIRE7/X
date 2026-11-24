@@ -41,3 +41,5 @@ for va in (0x4800319A,0x480040BC,0x480040DA,0x4802EB76,0x4802ECA8):
 save("CALLER_WINDOWS.txt",caller)
 summary=["Stage 16 read-only targeted trace.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={sha}",f"expected_sha_match={sha=='b99a899639271f0494b5d4c4be05f99be54f7ecdfb5211b556895436e4803119'}","Resolves PC-relative literal references in menu routines and searches bytewise function pointers.","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 16 workflow after its workflow definition is committed.
