@@ -34,3 +34,5 @@ for d,name in wanted.items():
 save("HANDLER_XREFS.txt",rows)
 summary=["Stage 26 read-only boot-mode action handler analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 26 workflow.
