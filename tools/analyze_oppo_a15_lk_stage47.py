@@ -57,3 +57,5 @@ save("SUMMARY.txt",[
  "No LK image bytes modified."
 ])
 print("\n".join(lines[:5]))
+
+# Trigger after workflow registration.
