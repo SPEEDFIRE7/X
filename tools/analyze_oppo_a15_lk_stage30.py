@@ -33,3 +33,5 @@ for d,n in targets.items():
 save("BOOT_TASK_CALLERS.txt",rows)
 summary=["Stage 30 read-only boot main-loop state/action trace.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 30 workflow.
