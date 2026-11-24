@@ -1,0 +1,46 @@
+name: Oppo A15 LK menu deep analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_path:
+        description: "Repository path to the original Oppo A15 LK image"
+        required: true
+        default: "oppo-a15-signed-test.img"
+      load_base:
+        description: "LK load base"
+        required: true
+        default: "0x48000000"
+      payload_offset:
+        description: "MTK LK payload offset"
+        required: true
+        default: "0x200"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-menu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Capstone
+        run: python -m pip install --disable-pip-version-check capstone
+      - name: Inspect menu and unlock strings (read only)
+        env:
+          IMAGE_PATH: ${{ inputs.image_path || 'oppo-a15-signed-test.img' }}
+          LOAD_BASE: ${{ inputs.load_base || '0x48000000' }}
+          PAYLOAD_OFFSET: ${{ inputs.payload_offset || '0x200' }}
+        run: python tools/analyze_oppo_a15_lk_menu.py
+      - name: Upload detailed report
+        uses: actions/upload-artifact@v4
+        with:
+          name: oppo-a15-lk-menu-deep-analysis
+          path: menu-deep-analysis/
+          if-no-files-found: error
+          retention-days: 14
