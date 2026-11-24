@@ -52,3 +52,5 @@ for p in range(0,len(raw)-3):
 save("FUNCTION_TABLE_RELATIVE_REFS.txt",hits or ["No direct absolute/offset/rel32 references found."])
 summary=["Stage 17 read-only relative reference and menu text scan.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 17 workflow.
