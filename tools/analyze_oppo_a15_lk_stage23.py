@@ -43,3 +43,5 @@ for d,n in targets.items():
 save("HELPER_CALLERS.txt",rows)
 summary=["Stage 23 read-only menu entry and indirect-dispatch analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 23 workflow.
