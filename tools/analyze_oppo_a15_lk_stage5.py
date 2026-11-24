@@ -95,3 +95,5 @@ for mode,site,target,kind,detail in uniq:
  ctx.append(f"  TARGET_BYTES: {ascii_at(target)}")
 wr("xref_context.txt",ctx)
 print((OUT/"SUMMARY.txt").read_text())
+
+# Trigger Stage 5 whole-image resynchronizing analysis.
