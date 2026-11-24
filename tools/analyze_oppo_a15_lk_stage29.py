@@ -36,3 +36,5 @@ for name,va,n in regions:
 save("RESOLVED_PROPERTY_AND_MENU_STRINGS.txt",refs)
 summary=["Stage 29 read-only key config property and menu string analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 29 workflow.
