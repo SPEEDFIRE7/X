@@ -203,3 +203,5 @@ summary = [
 ]
 (OUT / "SUMMARY.txt").write_text("\n".join(summary) + "\n")
 print("\n".join(summary))
+
+# Trigger stage-3 workflow after adding its workflow definition.
