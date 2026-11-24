@@ -5,7 +5,7 @@ from pathlib import Path
 from capstone import Cs,CS_ARCH_ARM,CS_MODE_THUMB,CS_MODE_LITTLE_ENDIAN
 IMAGE=Path(os.getenv("IMAGE_PATH","oppo-a15-signed-test.img")); BASE=int(os.getenv("LOAD_BASE","0x48000000"),0)
 raw=IMAGE.read_bytes(); OUT=Path("menu-trace-stage32"); OUT.mkdir(exist_ok=True)
-md=Cs(CS_ARCH_ARM,CS_MODE_THUMB,CS_MODE_LITTLE_ENDIAN)
+md=Cs(CS_ARCH_ARM,CS_MODE_THUMB|CS_MODE_LITTLE_ENDIAN)
 def get(va,n):
  p=va-BASE; return raw[p:p+n] if p>=0 and p+n<=len(raw) else b""
 def dis(va,n): return list(md.disasm(get(va,n),va))
@@ -52,3 +52,5 @@ summary=["Stage 32 read-only boot state dispatcher analysis.",f"image={IMAGE}",f
 save("SUMMARY.txt",summary); print("\n".join(summary))
 
 # Trigger Stage 32 workflow.
+
+# Trigger fixed Stage 32 workflow.
