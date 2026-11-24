@@ -29,3 +29,5 @@ for d,n in targets.items():
 (OUT/"MENU_INTERNAL_BRANCHES.txt").write_text("\n".join(nearby)+"\n")
 summary=["Stage 24 read-only Thumb B.W/BL xref scan.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 (OUT/"SUMMARY.txt").write_text("\n".join(summary)+"\n"); print("\n".join(summary))
+
+# Trigger Stage 24 workflow.
