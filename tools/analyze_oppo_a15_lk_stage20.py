@@ -43,3 +43,5 @@ for p in range(0,len(raw)-3,4):
 save("MMIO_CONSTANTS.txt",const)
 summary=["Stage 20 read-only low-level input primitive analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 20 workflow.
