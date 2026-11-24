@@ -38,3 +38,5 @@ for d,n in targets.items():
 save("KEY_CALLERS.txt",rows)
 summary=["Stage 18 read-only key primitive and boot path inspection.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 18 workflow.
