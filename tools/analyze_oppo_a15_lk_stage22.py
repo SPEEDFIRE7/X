@@ -47,3 +47,5 @@ for p in range(0,len(raw)-4,2):
 save("MENU_STATE_WRITES.txt",stores[:1200])
 summary=["Stage 22 read-only event poll and menu state trace.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 22 workflow.
