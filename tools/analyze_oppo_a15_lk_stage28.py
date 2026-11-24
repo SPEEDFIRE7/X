@@ -54,3 +54,5 @@ for start,end in [(0x48000000,0x48010000),(0x48020000,0x48031000)]:
 save("BOOTMODE_STRING_REFS.txt",refs)
 summary=["Stage 28 read-only boot mode string consumer analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 28 workflow.
