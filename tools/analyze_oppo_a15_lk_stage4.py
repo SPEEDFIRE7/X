@@ -85,3 +85,5 @@ summary=["Oppo A15 LK stage-4 fast targeted xref scan (READ ONLY)",f"image={IMAG
 # Re-run Stage 4 after operand parser fix.
 
 # Trigger code-region candidate scan.
+
+# Re-run after scan bound fix.
