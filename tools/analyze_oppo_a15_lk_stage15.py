@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Stage 15: precise menu call graph, pointer references, and menu text. READ ONLY."""
+# Stage 15 workflow path fix applied.
 import os, struct, hashlib
 from pathlib import Path
 from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_LITTLE_ENDIAN
