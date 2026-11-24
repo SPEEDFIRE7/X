@@ -1,0 +1,33 @@
+name: Oppo A15 LK boot global table stage 34
+on:
+  push:
+    paths:
+      - 'tools/analyze_oppo_a15_lk_stage34.py'
+      - '.github/workflows/oppo-a15-lk-menu-stage34.yml'
+  workflow_dispatch:
+    inputs:
+      image_path:
+        description: "Original LK image path"
+        required: true
+        default: "oppo-a15-signed-test.img"
+permissions:
+  contents: read
+jobs:
+  stage34:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dump boot global tables (read only)
+        env:
+          IMAGE_PATH: ${{ inputs.image_path || 'oppo-a15-signed-test.img' }}
+          LOAD_BASE: "0x48000000"
+        run: python tools/analyze_oppo_a15_lk_stage34.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oppo-a15-lk-menu-stage34
+          path: menu-trace-stage34/
+          if-no-files-found: error
+          retention-days: 14
