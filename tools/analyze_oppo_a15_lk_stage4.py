@@ -79,3 +79,5 @@ summary=["Oppo A15 LK stage-4 fast targeted xref scan (READ ONLY)",f"image={IMAG
 (OUT/"SUMMARY.txt").write_text("\n".join(summary)+"\n"); print("\n".join(summary))
 
 # Trigger optimized stage 4 scan.
+
+# Re-run Stage 4 after operand parser fix.
