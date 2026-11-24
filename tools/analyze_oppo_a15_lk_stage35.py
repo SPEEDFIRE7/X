@@ -32,3 +32,5 @@ for p in range(0,len(raw)-3,4):
 save("STATE_AND_MENU_POINTER_OCCURRENCES.txt",refs)
 summary=["Stage 35 read-only boot state storage analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 35 workflow.
