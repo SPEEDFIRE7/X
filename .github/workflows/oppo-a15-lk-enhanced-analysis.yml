@@ -33,9 +33,9 @@ jobs:
         run: python -m pip install --disable-pip-version-check capstone
       - name: Validate and analyze LK
         env:
-          IMAGE_PATH: \${{ inputs.image_path }}
-          LOAD_BASE: \${{ inputs.load_base }}
-          PAYLOAD_OFFSET: \${{ inputs.payload_offset }}
+          IMAGE_PATH: ${{ inputs.image_path }}
+          LOAD_BASE: ${{ inputs.load_base }}
+          PAYLOAD_OFFSET: ${{ inputs.payload_offset }}
         run: python tools/analyze_oppo_a15_lk.py
       - name: Upload enhanced analysis
         uses: actions/upload-artifact@v4
