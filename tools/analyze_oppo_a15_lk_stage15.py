@@ -30,13 +30,21 @@ def dis(va,n):
 def save(name,lines): (OUT/name).write_text("\n".join(lines)+"\n")
 # One sequential disassembly pass; retain exact direct control-flow xrefs.
 xrefs={k:[] for k in targets}; caller_ins={}
-for ins in md.disasm(payload,BASE+PREFIX):
- if ins.id in (ARM_INS_BL,ARM_INS_BLX,ARM_INS_B):
-  try: dest=int(ins.op_str.split(",")[0].lstrip("#"),0)&~1
-  except: continue
+# Decode Thumb-2 BL encodings directly at every halfword boundary. This avoids
+# linear-disassembly desynchronization when code and literal/data pools interleave.
+for p in range(0,len(payload)-3,2):
+ h1,h2=struct.unpack_from("<HH",payload,p)
+ if (h1 & 0xF800)==0xF000 and (h2 & 0xD000)==0xD000:
+  s=(h1>>10)&1; j1=(h2>>13)&1; j2=(h2>>11)&1
+  i1=1^(j1^s); i2=1^(j2^s)
+  imm=((s<<24)|(i1<<23)|(i2<<22)|((h1&0x03FF)<<12)|((h2&0x07FF)<<1))
+  if imm & (1<<24): imm-=1<<25
+  site=BASE+PREFIX+p
+  dest=(site+4+imm)&0xFFFFFFFF
+  dest &= ~1
   if dest in xrefs:
-   xrefs[dest].append(ins.address)
-   caller_ins[ins.address]=f"0x{ins.address:08X}: {ins.mnemonic} {ins.op_str}"
+   xrefs[dest].append(site)
+   caller_ins[site]=f"0x{site:08X}: BL -> 0x{dest:08X}"
 rows=["Direct Thumb branch/call xrefs from a single linear sweep (candidate sites; inspect CFG):"]
 for dest,name in targets.items():
  rows.append(f"\n{name} 0x{dest:08X}: {len(xrefs[dest])}")
@@ -93,7 +101,7 @@ summary=[
  "Stage 15 read-only call-graph and menu-string analysis.",
  f"image={IMAGE}",f"size={len(raw)}",f"sha256={sha}",f"expected_sha_match={sha==EXPECTED}",
  f"payload_offset=0x{PREFIX:X}; load_base=0x{BASE:08X}",
- f"linear_thumb_instructions={sum(1 for _ in md.disasm(payload,BASE+PREFIX))}",
+ f"thumb_halfwords_scanned={(len(payload)-3)//2}",
  "Direct xrefs and pointer references are candidates; linear Thumb disassembly may cross data and must be checked against function boundaries.",
  "No LK image bytes modified."
 ]
