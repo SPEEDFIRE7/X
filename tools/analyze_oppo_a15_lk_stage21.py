@@ -43,3 +43,5 @@ for va in range(0x48006D00,0x48007840,2):
 save("IO_REQUEST_IDS.txt",ids)
 summary=["Stage 21 read-only shared IO dispatcher analysis.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 21 workflow.
