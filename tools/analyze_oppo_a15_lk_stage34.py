@@ -31,3 +31,5 @@ for start,end in [(0x48003F50,0x48004188),(0x48021548,0x480217A8)]:
 save("BOOT_CODE_LITERAL_WORDS.txt",lit)
 summary=["Stage 34 read-only boot global table dump.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 34 workflow.
