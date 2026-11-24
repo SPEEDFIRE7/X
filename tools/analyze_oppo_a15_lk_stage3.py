@@ -8,7 +8,7 @@ import os, struct, hashlib
 from pathlib import Path
 from collections import deque, defaultdict
 from capstone import Cs, CS_ARCH_ARM, CS_MODE_ARM, CS_MODE_THUMB, CS_MODE_LITTLE_ENDIAN
-from capstone.arm import ARM_OP_IMM, ARM_OP_MEM, ARM_REG_PC
+from capstone.arm import ARM_OP_IMM, ARM_OP_MEM, ARM_OP_REG, ARM_REG_PC
 
 IMAGE = Path(os.getenv("IMAGE_PATH", "oppo-a15-signed-test.img"))
 BASE = int(os.getenv("LOAD_BASE", "0x48000000"), 0)
