@@ -53,3 +53,5 @@ save("SUMMARY.txt",[
  "No LK image bytes modified."
 ])
 print("\n".join(["Stage 38 complete",f"sha256={sha}",f"main_loop_global_base=0x{base:08X}"]))
+
+# Trigger after workflow registration.
