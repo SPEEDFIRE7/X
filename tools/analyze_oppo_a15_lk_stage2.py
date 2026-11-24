@@ -105,3 +105,5 @@ for name,mode,step in [("THUMB",CS_MODE_THUMB|CS_MODE_LITTLE_ENDIAN,2),("ARM",CS
     f"internal_branch_candidates={len(calls)}\n\n"+
     "Caution: linear sweeps may decode data as instructions. Candidate branch targets and prologues are not verified functions. No image is patched.\n")
 print((out/"SUMMARY.txt").read_text())
+
+# Stage-2 analyzer revision: re-run after workflow registration.\n
