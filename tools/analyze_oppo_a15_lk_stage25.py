@@ -47,3 +47,5 @@ for j,x in enumerate(ins):
 save("POST_LOCK_FLOW_STRINGS.txt",strings)
 summary=["Stage 25 read-only boot-mode owner and global indirect-dispatch scan.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}",f"global_register_indirect_sites={len(ind)}",f"global_pc_load_or_table_branch_sites={len(tables)}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 25 workflow.
