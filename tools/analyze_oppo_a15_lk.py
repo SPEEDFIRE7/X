@@ -1,80 +1,168 @@
-
 #!/usr/bin/env python3
-"""Read-only static analysis of an Oppo A15 MediaTek LK image."""
-
+"""Read-only Oppo A15 LK analysis: Thumb call scan and string cross-references."""
 import hashlib
 import os
 import re
+import struct
 from pathlib import Path
 
 from capstone import (
-    Cs,
-    CS_ARCH_ARM,
-    CS_MODE_THUMB,
-    CS_MODE_LITTLE_ENDIAN,
+    Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_LITTLE_ENDIAN,
+    CS_MODE_ARM, CS_MODE_LITTLE_ENDIAN as ARM_LE,
 )
+from capstone.arm import ARM_OP_IMM, ARM_OP_MEM, ARM_REG_PC
 
-image_path = Path(
-    os.environ.get("IMAGE_PATH", "oppo-a15-signed-test.img")
+IMAGE = Path(os.environ.get("IMAGE_PATH", "oppo-a15-signed-test.img"))
+BASE = int(os.environ.get("LOAD_BASE", "0x48000000"), 0)
+PREFIX = int(os.environ.get("PAYLOAD_OFFSET", "0x200"), 0)
+OUT = Path("lk-analysis")
+OUT.mkdir(exist_ok=True)
+
+if not IMAGE.is_file():
+    raise SystemExit(f"LK image not found: {IMAGE}")
+
+blob = IMAGE.read_bytes()
+if len(blob) < PREFIX + 4:
+    raise SystemExit("Image is smaller than payload offset.")
+
+# MediaTek LK header fields seen in this image.
+magic = struct.unpack_from("<I", blob, 0)[0]
+payload_size = struct.unpack_from("<I", blob, 4)[0]
+payload = blob[PREFIX:]
+sha = hashlib.sha256(blob).hexdigest()
+
+# Validate, but do not silently change, the selected payload offset.
+header_notes = [
+    f"header_magic=0x{magic:08X}",
+    f"header_payload_size=0x{payload_size:X}",
+    f"actual_payload_size_from_offset=0x{len(payload):X}",
+    f"payload_size_matches={payload_size == len(payload)}",
+    f"payload_offset=0x{PREFIX:X}",
+]
+(OUT / "header_validation.txt").write_text("\n".join(header_notes) + "\n")
+(OUT / "sha256.txt").write_text(
+    f"file={IMAGE}\nsize={len(blob)} (0x{len(blob):X})\nsha256={sha}\n"
+    f"load_base=0x{BASE:08X}\npayload_offset=0x{PREFIX:X}\n"
 )
+(OUT / "header.bin").write_bytes(blob[:PREFIX])
 
-load_base = int(
-    os.environ.get("LOAD_BASE", "0x48000000"), 0
+# Collect relevant printable strings and their runtime addresses.
+string_re = re.compile(rb"[\x20-\x7e]{4,}")
+keywords = re.compile(
+    r"env|seccfg|lock|unlock|fastboot|security|verify|policy|"
+    r"spoof|bootmode|secure|avb|orange|device",
+    re.I,
 )
-
-prefix = int(
-    os.environ.get("PAYLOAD_OFFSET", "0x200"), 0
-)
-
-out = Path("lk-analysis")
-out.mkdir(exist_ok=True)
-
-if not image_path.is_file():
-    raise SystemExit(f"LK image not found: {image_path}")
-
-data = image_path.read_bytes()
-digest = hashlib.sha256(data).hexdigest()
-
-(out / "sha256.txt").write_text(
-    f"file={image_path}\n"
-    f"size={len(data)} (0x{len(data):X})\n"
-    f"sha256={digest}\n"
-    f"load_base=0x{load_base:08X}\n"
-    f"payload_offset=0x{prefix:X}\n"
-)
-
-if len(data) < prefix + 4:
-    raise SystemExit("Image is smaller than selected payload offset.")
-
-payload = data[prefix:]
-
-(out / "header.bin").write_bytes(data[:prefix])
-
-# Search printable strings relevant to environment,
-# security, and fastboot.
-rx = re.compile(rb"[\x20-\x7e]{4,}")
-matches = []
-
-for m in rx.finditer(payload):
+strings = []
+for m in string_re.finditer(payload):
     value = m.group().decode("ascii", "replace")
+    if keywords.search(value):
+        file_off = PREFIX + m.start()
+        va = BASE + m.start()
+        strings.append((file_off, va, value))
 
-    if re.search(
-        r"env|seccfg|lock|unlock|fastboot|security|"
-        r"verify|policy|spoof|bootmode|secure",
-        value,
-        re.I,
-    ):
-        matches.append((prefix + m.start(), value))
-
-(out / "interesting_strings.txt").write_text(
+(OUT / "interesting_strings.txt").write_text(
     "\n".join(
-        f"file_off=0x{o:X} "
-        f"va~=0x{load_base + o - prefix:08X}  {value}"
-        for o, value in matches
-    )
-    or "No matching printable strings found.\n"
+        f"file_off=0x{o:X} va=0x{va:08X} {s}"
+        for o, va, s in strings
+    ) + "\n"
 )
 
+# Full halfword-aligned sweep. Each candidate is decoded independently so
+# one invalid/data word cannot terminate analysis of the rest of the image.
+thumb = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_LITTLE_ENDIAN)
+thumb.detail = True
+call_rows = []
+xref_rows = []
+decoded = 0
+
+for rel in range(0, len(payload) - 4, 2):
+    va = BASE + rel
+    chunk = payload[rel:rel + 4]
+    insns = list(thumb.disasm(chunk, va, count=1))
+    if not insns:
+        continue
+    ins = insns[0]
+    decoded += 1
+
+    if ins.mnemonic in ("bl", "blx") and ins.operands:
+        op = ins.operands[0]
+        if op.type == ARM_OP_IMM:
+            call_rows.append(
+                f"site=0x{ins.address:08X} target=0x{op.imm & 0xFFFFFFFF:08X} "
+                f"bytes={ins.bytes.hex()} {ins.mnemonic} {ins.op_str}"
+            )
+
+    target = None
+    # Thumb literal LDR: effective address is aligned PC + immediate.
+    if ins.mnemonic.startswith("ldr") and len(ins.operands) >= 2:
+        memop = ins.operands[1]
+        if memop.type == ARM_OP_MEM and memop.mem.base == ARM_REG_PC:
+            target = ((ins.address + 4) & ~3) + memop.mem.disp
+    # ADR pseudo-instruction resolves to a PC-relative address.
+    if ins.mnemonic == "adr" and len(ins.operands) >= 2:
+        op = ins.operands[1]
+        if op.type == ARM_OP_IMM:
+            target = op.imm & 0xFFFFFFFF
+
+    if target is not None:
+        target &= 0xFFFFFFFF
+        for so, sva, text in strings:
+            if target == sva:
+                xref_rows.append(
+                    f"site=0x{ins.address:08X} string=0x{sva:08X} "
+                    f"file_off=0x{so:X} {text}\n"
+                    f"    {ins.mnemonic} {ins.op_str} bytes={ins.bytes.hex()}"
+                )
+
+(OUT / "thumb_call_sites.txt").write_text(
+    "\n".join(call_rows) + ("\n" if call_rows else "No BL/BLX candidates found.\n")
+)
+(OUT / "thumb_string_xrefs.txt").write_text(
+    "\n\n".join(xref_rows) + ("\n" if xref_rows else "No direct Thumb literal/ADR string xrefs found.\n")
+)
+
+# Also locate absolute pointers to relevant string addresses in data/literal pools.
+pointer_rows = []
+string_by_va = {va: (off, text) for off, va, text in strings}
+for pos in range(PREFIX, len(blob) - 3, 4):
+    value = struct.unpack_from("<I", blob, pos)[0]
+    if value in string_by_va:
+        off, text = string_by_va[value]
+        pointer_rows.append(
+            f"pointer_file_off=0x{pos:X} pointer_va=0x{BASE + pos - PREFIX:08X} "
+            f"target=0x{value:08X} target_file_off=0x{off:X} {text}"
+        )
+(OUT / "string_pointer_xrefs.txt").write_text(
+    "\n".join(pointer_rows) + ("\n" if pointer_rows else "No aligned absolute string pointers found.\n")
+)
+
+# Context around direct xrefs, useful for manual function-boundary review.
+context_lines = []
+seen = set()
+for row in xref_rows:
+    m = re.search(r"site=0x([0-9A-Fa-f]+)", row)
+    if not m:
+        continue
+    site = int(m.group(1), 16)
+    start_rel = max(0, site - BASE - 0x50)
+    end_rel = min(len(payload), site - BASE + 0x70)
+    if start_rel in seen:
+        continue
+    seen.add(start_rel)
+    context_lines.append(f"\n===== xref context around 0x{site:08X} =====")
+    start = start_rel & ~1
+    for ins in thumb.disasm(payload[start:end_rel], BASE + start):
+        context_lines.append(
+            f"0x{ins.address:08X}: {ins.mnemonic:8} {ins.op_str} "
+            f"[{ins.bytes.hex()}]"
+        )
+(OUT / "xref_context_thumb.txt").write_text(
+    "\n".join(context_lines) + ("\n" if context_lines else "No xref contexts.\n")
+)
+
+# Known addresses from the previous device report. These are context only;
+# their correctness must be confirmed against this exact image.
 known = {
     "platform_init": 0x480028B8,
     "fastboot_fail": 0x48022CE4,
@@ -83,87 +171,37 @@ known = {
     "fastboot_publish": 0x4802E160,
     "fastboot_register": 0x4802E064,
     "mtk_detect_key": 0x480249F0,
-    "bootmode_address": 0x480B7000,
 }
-
-md = Cs(
-    CS_ARCH_ARM,
-    CS_MODE_THUMB | CS_MODE_LITTLE_ENDIAN
-)
-md.detail = True
-
-disassembly = []
-
+lines = []
 for name, va in known.items():
-    off = prefix + (va - load_base)
-
-    disassembly.append(
-        f"\n===== {name}: VA 0x{va:08X}, "
-        f"file offset 0x{off:X} ====="
-    )
-
-    if off < prefix or off >= len(data):
-        disassembly.append("OUT OF IMAGE RANGE")
+    rel = va - BASE
+    lines.append(f"\n===== {name} VA=0x{va:08X} =====")
+    if rel < 0 or rel >= len(payload):
+        lines.append("OUT OF PAYLOAD RANGE")
         continue
-
-    start = max(prefix, off - 0x40)
-    end = min(len(data), off + 0x100)
-
-    for ins in md.disasm(
-        data[start:end],
-        load_base + (start - prefix)
-    ):
-        mark = "  <==" if ins.address == va else ""
-
-        disassembly.append(
-            f"0x{ins.address:08X}: "
-            f"{ins.mnemonic:8} {ins.op_str}{mark}"
+    start = max(0, rel - 0x40) & ~1
+    end = min(len(payload), rel + 0x100)
+    for ins in thumb.disasm(payload[start:end], BASE + start):
+        mark = " <== reported address" if ins.address == va else ""
+        lines.append(
+            f"0x{ins.address:08X}: {ins.mnemonic:8} {ins.op_str}{mark}"
         )
-
-(out / "known_addresses_thumb.txt").write_text(
-    "\n".join(disassembly) + "\n"
-)
-
-# Heuristic linear sweep:
-# candidate BL/BLX targets, not proof of function boundaries.
-targets = {}
-
-for ins in md.disasm(payload, load_base):
-    if ins.mnemonic in ("bl", "blx") and ins.operands:
-        try:
-            target = ins.operands[0].imm
-        except Exception:
-            continue
-
-        targets[target] = targets.get(target, 0) + 1
-
-(out / "thumb_call_targets.txt").write_text(
-    "\n".join(
-        f"0x{addr:08X} calls={count}"
-        for addr, count in sorted(
-            targets.items(),
-            key=lambda item: (-item[1], item[0])
-        )
-    ) + "\n"
-)
+(OUT / "known_addresses_thumb.txt").write_text("\n".join(lines) + "\n")
 
 summary = [
-    "Oppo A15 LK static analysis completed (read-only).",
-    f"Image: {image_path}",
-    f"Bytes: {len(data)} (0x{len(data):X})",
-    f"SHA256: {digest}",
-    f"Load base: 0x{load_base:08X}; "
-    f"payload offset: 0x{prefix:X}",
-    f"Interesting strings: {len(matches)}",
-    f"Candidate BL/BLX targets: {len(targets)}",
+    "Oppo A15 LK enhanced static analysis (READ ONLY).",
+    f"Image size: {len(blob)} (0x{len(blob):X})",
+    f"SHA256: {sha}",
+    *header_notes,
+    f"Relevant strings: {len(strings)}",
+    f"Decoded halfword-aligned Thumb candidates: {decoded}",
+    f"Candidate BL/BLX sites: {len(call_rows)}",
+    f"Direct Thumb string xrefs: {len(xref_rows)}",
+    f"Aligned absolute string pointers: {len(pointer_rows)}",
     "",
-    "Linear-sweep call targets are heuristic and may include false positives.",
-    "No spoof patch is generated. Validate get_env/set_env, env-init,",
-    "seccfg_get_lock_state, and fastboot command dispatch before patching.",
+    "IMPORTANT: sliding halfword decoding creates false positives.",
+    "Review call sites and xrefs in context; none is proof of a function.",
+    "No binary patch is produced. Do not flash this analysis output.",
 ]
-
-(out / "README.txt").write_text(
-    "\n".join(summary) + "\n"
-)
-
+(OUT / "README.txt").write_text("\n".join(summary) + "\n")
 print("\n".join(summary))
