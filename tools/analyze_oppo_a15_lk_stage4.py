@@ -77,3 +77,5 @@ for md,site,t,kind,detail in uniq:
 wr("xref_context.txt",ctx)
 summary=["Oppo A15 LK stage-4 fast targeted xref scan (READ ONLY)",f"image={IMAGE}",f"sha256={hashlib.sha256(raw).hexdigest()}",f"size={len(raw)} payload_offset=0x{PREFIX:X} load_base=0x{BASE:08X}",f"target_string_occurrences={len(strings)}",f"thumb_decoded_instructions={len(thumb)}",f"arm_decoded_instructions={len(arm)}",f"exact_code_xrefs={len(uniq)}",f"absolute_pointer_hits={len(ptr)}","Methods: exact ADR, PC-relative literal LDR followed by ADD PC, absolute aligned pointer values.","Linear decoding may interpret some data as instructions; exact target match and surrounding context are required for validation.","No image bytes are modified."]
 (OUT/"SUMMARY.txt").write_text("\n".join(summary)+"\n"); print("\n".join(summary))
+
+# Trigger optimized stage 4 scan.
