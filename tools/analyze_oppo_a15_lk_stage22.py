@@ -36,16 +36,14 @@ save("EVENT_CALLERS.txt",rows)
 # Search for writes to the shared menu input structure offsets 0x138/0x13c.
 # This reports nearby instruction windows around halfword/word stores with these offsets.
 stores=[]
-for p in range(0,len(raw)-4,2):
- va=BASE+p
- ins=dis(va,4)
- if not ins: continue
- x=ins[0]
+for x in md.disasm(raw,BASE):
  if x.mnemonic.startswith(("str","stur")) and any(t in x.op_str for t in ("#0x138","#0x13c","#312","#316")):
   stores.append(f"\n{fmt(x)}")
-  stores.extend(fmt(y) for y in dis(max(BASE,va-12),36))
+  stores.extend(fmt(y) for y in dis(max(BASE,x.address-12),36))
 save("MENU_STATE_WRITES.txt",stores[:1200])
 summary=["Stage 22 read-only event poll and menu state trace.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
 
 # Trigger Stage 22 workflow.
+
+# Optimized linear sweep trigger.
