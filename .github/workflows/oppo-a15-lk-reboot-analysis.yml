@@ -1,6 +1,11 @@
 name: Oppo A15 LK reboot options analysis
 
 on:
+  push:
+    paths:
+      - 'tools/analyze_oppo_a15_lk_reboot.py'
+      - '.github/workflows/oppo-a15-lk-reboot-analysis.yml'
+      - 'oppo-a15-signed-test.img'
   workflow_dispatch:
     inputs:
       image_path:
