@@ -36,3 +36,5 @@ for d,n in targets.items():
 save("KEY_API_CALLERS.txt",rows)
 summary=["Stage 19 read-only key-state API inspection.",f"image={IMAGE}",f"size={len(raw)}",f"sha256={hashlib.sha256(raw).hexdigest()}","No LK image bytes modified."]
 save("SUMMARY.txt",summary); print("\n".join(summary))
+
+# Trigger Stage 19 workflow.
