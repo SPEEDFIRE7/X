@@ -23,10 +23,12 @@ for o in range(0,len(data)-3,4):
  v=struct.unpack_from("<I",data,o)[0]
  if v in targets: ptr.append((BASE+o,v))
 # Fast decoder output: address,size,mnemonic,operand string
+scan_end=min(len(data),int(os.getenv("CODE_SCAN_LIMIT","0xA0000"),0))
+scan_data=data[:scan_end]
 tm=Cs(CS_ARCH_ARM,CS_MODE_THUMB|CS_MODE_LITTLE_ENDIAN)
 am=Cs(CS_ARCH_ARM,CS_MODE_ARM|CS_MODE_LITTLE_ENDIAN)
-thumb={a-BASE:(a,s,m.lower(),op) for a,s,m,op in tm.disasm_lite(data,BASE)}
-arm={a-BASE:(a,s,m.lower(),op) for a,s,m,op in am.disasm_lite(data,BASE)}
+thumb={a-BASE:(a,s,m.lower(),op) for a,s,m,op in tm.disasm_lite(scan_data,BASE)}
+arm={a-BASE:(a,s,m.lower(),op) for a,s,m,op in am.disasm_lite(scan_data,BASE)}
 regpat=r"(?:r(?:1[0-2]|[0-9])|ip|fp|sl|sb|lr|sp|pc)"
 ldrpat=re.compile(r"^\s*("+regpat+r")\s*,\s*\[pc\s*,\s*#?(-?0x[0-9a-f]+|-?[0-9]+)\s*\]",re.I)
 addpat=re.compile(r"^\s*("+regpat+r")\s*,\s*pc\s*$",re.I)
