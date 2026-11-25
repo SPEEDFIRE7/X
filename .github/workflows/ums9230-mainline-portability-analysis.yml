@@ -1,0 +1,50 @@
+name: UMS9230 Mainline Portability Analysis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone reference and X6528 kernel
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3
+          git clone --depth 1 https://github.com/EberhartLeberhart/Mainline-Linux-f-r-das-Xiaomi-Redmi-A5-serenity-.git reference
+          git clone --depth 1 https://github.com/SPEEDFIRE7/android_kernel_infinix_X6528.git x6528-kernel
+      - name: Compare device trees and defconfig
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          ref, dev = Path("reference"), Path("x6528-kernel")
+          def inventory(root, exts):
+              return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts and ".git" not in p.parts)
+          def symbols(p):
+              if not p.exists(): return set()
+              return set(re.findall(r"^CONFIG_[A-Z0-9_]+(?==)", p.read_text(errors="ignore"), re.M))
+          rdts, ddts = inventory(ref,{".dts",".dtsi"}), inventory(dev,{".dts",".dtsi"})
+          patches = inventory(ref/"kernel"/"patches",{".patch"}) if (ref/"kernel"/"patches").exists() else []
+          rconf = symbols(ref/"kernel"/"redmi_a5_defconfig")
+          dconf = set().union(*(symbols(p) for p in dev.rglob("*defconfig"))) if list(dev.rglob("*defconfig")) else set()
+          lines = ["# UMS9230 Mainline portability report", "", "Static inventory only. No patches are applied, no images are built, and no device partitions are modified.", "", f"- Redmi A5 DTS/DTSI files: {len(rdts)}", f"- X6528 DTS/DTSI files: {len(ddts)}", f"- Reference patch files: {len(patches)}", f"- Redmi A5 config symbols: {len(rconf)}", f"- X6528 config symbols: {len(dconf)}", "", "## Redmi A5-only config symbols"]
+          lines += ["- "+x for x in sorted(rconf-dconf)[:200]] or ["- None"]
+          lines += ["", "## Redmi A5 DTS/DTSI paths"] + ["- "+x for x in rdts[:150]]
+          lines += ["", "## X6528 DTS/DTSI paths"] + ["- "+x for x in ddts[:150]]
+          lines += ["", "## Reference patches"] + ["- "+x for x in patches]
+          lines += ["", "## Hardware safety", "- Never reuse Redmi A5/T7250 DRAM training data, FDL, bootloader components, or partition images on X6528/T606.", "- Validate X6528 clocks, regulators, GPIOs, panel, storage, and interrupts independently.", "- Review patches individually against the exact UMS9230 kernel base. Similar SoC naming does not prove device compatibility.", ""]
+          Path("mainline-portability-report.md").write_text("\n".join(lines))
+          print("\n".join(lines))
+          PY
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ums9230-mainline-portability-report
+          path: mainline-portability-report.md
+          retention-days: 14
