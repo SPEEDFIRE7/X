@@ -18,27 +18,103 @@ jobs:
           sudo apt-get install -y git python3
           git clone --depth 1 https://github.com/EberhartLeberhart/Mainline-Linux-f-r-das-Xiaomi-Redmi-A5-serenity-.git reference
           git clone --depth 1 https://github.com/SPEEDFIRE7/android_kernel_infinix_X6528.git x6528-kernel
-      - name: Compare device trees and defconfig
+      - name: Compare device trees, patches and defconfigs
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           ref, dev = Path("reference"), Path("x6528-kernel")
+
           def inventory(root, exts):
-              return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts and ".git" not in p.parts)
-          def symbols(p):
-              if not p.exists(): return set()
-              return set(re.findall(r"^CONFIG_[A-Z0-9_]+(?==)", p.read_text(errors="ignore"), re.M))
-          rdts, ddts = inventory(ref,{".dts",".dtsi"}), inventory(dev,{".dts",".dtsi"})
-          patches = inventory(ref/"kernel"/"patches",{".patch"}) if (ref/"kernel"/"patches").exists() else []
-          rconf = symbols(ref/"kernel"/"redmi_a5_defconfig")
-          dconf = set().union(*(symbols(p) for p in dev.rglob("*defconfig"))) if list(dev.rglob("*defconfig")) else set()
-          lines = ["# UMS9230 Mainline portability report", "", "Static inventory only. No patches are applied, no images are built, and no device partitions are modified.", "", f"- Redmi A5 DTS/DTSI files: {len(rdts)}", f"- X6528 DTS/DTSI files: {len(ddts)}", f"- Reference patch files: {len(patches)}", f"- Redmi A5 config symbols: {len(rconf)}", f"- X6528 config symbols: {len(dconf)}", "", "## Redmi A5-only config symbols"]
-          lines += ["- "+x for x in sorted(rconf-dconf)[:200]] or ["- None"]
-          lines += ["", "## Redmi A5 DTS/DTSI paths"] + ["- "+x for x in rdts[:150]]
-          lines += ["", "## X6528 DTS/DTSI paths"] + ["- "+x for x in ddts[:150]]
-          lines += ["", "## Reference patches"] + ["- "+x for x in patches]
-          lines += ["", "## Hardware safety", "- Never reuse Redmi A5/T7250 DRAM training data, FDL, bootloader components, or partition images on X6528/T606.", "- Validate X6528 clocks, regulators, GPIOs, panel, storage, and interrupts independently.", "- Review patches individually against the exact UMS9230 kernel base. Similar SoC naming does not prove device compatibility.", ""]
+              return sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                            if p.is_file() and p.suffix.lower() in exts
+                            and ".git" not in p.parts)
+
+          def symbols(path):
+              if not path.exists():
+                  return set()
+              return set(re.findall(r"^CONFIG_[A-Z0-9_]+(?==)", path.read_text(errors="ignore"), re.M))
+
+          ref_patches = [ref / p for p in inventory(ref / "kernel" / "patches", {".patch"})] if (ref / "kernel" / "patches").exists() else []
+          ref_dts_disk = inventory(ref, {".dts", ".dtsi"})
+          dev_dts_all = inventory(dev, {".dts", ".dtsi"})
+          sprd_re = re.compile(r"(sprd|ums9230|unisoc|x6528|t606)", re.I)
+          dev_dts_sprd = [p for p in dev_dts_all if sprd_re.search(p)]
+
+          # Redmi A5's device-tree additions/changes are carried inside patch files.
+          patch_dts = set()
+          for patch in ref_patches:
+              text = patch.read_text(errors="ignore")
+              for path in re.findall(r"^\+\+\+ b/(.+\.(?:dts|dtsi))$", text, re.M):
+                  patch_dts.add(path)
+
+          ref_config_path = ref / "kernel" / "redmi_a5_defconfig"
+          ref_config = symbols(ref_config_path)
+          local_defconfigs = sorted(dev.rglob("*defconfig"))
+          local_candidates = []
+          for cfg in local_defconfigs:
+              cfg_symbols = symbols(cfg)
+              if sprd_re.search(str(cfg.relative_to(dev))) or any(
+                  s in cfg_symbols for s in ("CONFIG_ARCH_SPRD", "CONFIG_ARCH_UNISOC", "CONFIG_SPRD")
+              ):
+                  local_candidates.append((cfg, cfg_symbols))
+
+          lines = [
+              "# UMS9230 Mainline portability report",
+              "",
+              "Static source analysis only. No patches are applied, no images are built, and no device partitions are modified.",
+              "",
+              "## Device-tree inventory",
+              f"- Standalone DTS/DTSI files in Redmi A5 reference checkout: {len(ref_dts_disk)}",
+              f"- DTS/DTSI paths mentioned as added files in reference patches: {len(patch_dts)}",
+              f"- Total DTS/DTSI files in X6528 Android kernel tree: {len(dev_dts_all)}",
+              f"- X6528 DTS/DTSI paths matching SPRD/UMS9230/Unisoc/device keywords: {len(dev_dts_sprd)}",
+              "",
+              "### Redmi A5 DTS/DTSI paths found inside patches",
+          ]
+          lines += ["- `" + p + "`" for p in sorted(patch_dts)] or ["- No added DTS/DTSI paths detected; inspect patch diffs for modifications to existing files."]
+          lines += ["", "### X6528 SPRD-related DTS/DTSI paths"]
+          lines += ["- `" + p + "`" for p in dev_dts_sprd[:200]] or ["- No matching paths detected by filename; this does not prove the tree lacks SPRD support."]
+          lines += [
+              "",
+              "## Patch inventory",
+              f"- Reference patch files: {len(ref_patches)}",
+              "",
+          ]
+          lines += ["- `" + str(p.relative_to(ref)) + "`" for p in ref_patches] or ["- None"]
+          lines += [
+              "",
+              "## Defconfig comparison",
+              f"- Redmi A5 defconfig symbols: {len(ref_config)}",
+              f"- X6528 candidate SPRD/Unisoc defconfigs: {len(local_candidates)}",
+              "",
+          ]
+          if local_candidates:
+              local_symbols = set().union(*(s for _, s in local_candidates))
+              lines += [f"- Symbols in candidate X6528 defconfigs (union): {len(local_symbols)}",
+                        f"- Redmi A5-only symbols against candidate set: {len(ref_config - local_symbols)}",
+                        "", "### Candidate X6528 defconfigs"]
+              lines += ["- `" + str(p.relative_to(dev)) + "`" for p, _ in local_candidates]
+              lines += ["", "### Redmi A5-only config symbols (first 200)"]
+              lines += ["- `" + s + "`" for s in sorted(ref_config - local_symbols)[:200]] or ["- None"]
+          else:
+              lines += [
+                  "- No X6528 defconfig was confidently identified as SPRD/Unisoc-specific.",
+                  "- A comparison against every defconfig in the Android kernel tree would be misleading, so no cross-tree symbol difference is claimed.",
+                  "",
+                  "### Defconfig files available for manual selection",
+              ]
+              lines += ["- `" + str(p.relative_to(dev)) + "`" for p in local_defconfigs[:150]] or ["- None found"]
+          lines += [
+              "",
+              "## Hardware safety constraints",
+              "- Never reuse Redmi A5/T7250 DRAM training data, FDL, bootloader components, or partition images on X6528/T606.",
+              "- Validate X6528 clocks, regulators, GPIOs, panel, storage, and interrupt mappings independently.",
+              "- Patch paths and config-symbol overlap are clues for review, not proof of hardware compatibility.",
+              "- Review every candidate patch against the exact target kernel base before considering a build.",
+              "",
+          ]
           Path("mainline-portability-report.md").write_text("\n".join(lines))
           print("\n".join(lines))
           PY
