@@ -54,8 +54,9 @@ jobs:
           android = "{http://schemas.android.com/apk/res/android}"
           uses_sdk = root.find("uses-sdk")
           package = root.attrib.get("package", "unknown")
-          min_sdk = uses_sdk.attrib.get(android + "minSdkVersion", "unspecified") if uses_sdk is not None else "unspecified"
-          target_sdk = uses_sdk.attrib.get(android + "targetSdkVersion", "unspecified") if uses_sdk is not None else "unspecified"
+          min_sdk = uses_sdk.attrib.get(android + "minSdkVersion", "1 (Android default; not declared)") if uses_sdk is not None else "1 (Android default; uses-sdk absent)"
+          target_sdk = uses_sdk.attrib.get(android + "targetSdkVersion", "1 (Android default; not declared)") if uses_sdk is not None else "1 (Android default; uses-sdk absent)"
+          platform_build = root.attrib.get("platformBuildVersionName", "unspecified")
           version = root.attrib.get(android + "versionName", "unspecified")
           libs = []
           lib_root = "audit/decoded/lib"
