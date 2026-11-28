@@ -1,0 +1,89 @@
+name: AxisGSI Android 16 Compatibility Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      pixeldrain_id:
+        description: "Pixeldrain ID of the original AxisGSI APK"
+        required: true
+        default: "qcumBuYf"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: namespace-profile-speed
+    timeout-minutes: 20
+    steps:
+      - name: Prepare tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -version
+          sudo apt-get update
+          sudo apt-get install -y unzip file python3
+          curl --fail --location --retry 3 \
+            https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar \
+            --output apktool.jar
+
+      - name: Download original APK
+        env:
+          PIXELDRAIN_ID: ${{ inputs.pixeldrain_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          curl --fail --location --retry 4 --retry-delay 3 \
+            "https://pixeldrain.com/api/file/${PIXELDRAIN_ID}?download" \
+            --output audit/AxisGSI.apk
+          test -s audit/AxisGSI.apk
+          file audit/AxisGSI.apk
+          unzip -t audit/AxisGSI.apk
+
+      - name: Decode manifest and inspect native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar apktool.jar d --force --no-src audit/AxisGSI.apk -o audit/decoded
+          python3 - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          apk_manifest = "audit/decoded/AndroidManifest.xml"
+          root = ET.parse(apk_manifest).getroot()
+          android = "{http://schemas.android.com/apk/res/android}"
+          uses_sdk = root.find("uses-sdk")
+          package = root.attrib.get("package", "unknown")
+          min_sdk = uses_sdk.attrib.get(android + "minSdkVersion", "unspecified") if uses_sdk is not None else "unspecified"
+          target_sdk = uses_sdk.attrib.get(android + "targetSdkVersion", "unspecified") if uses_sdk is not None else "unspecified"
+          version = root.attrib.get(android + "versionName", "unspecified")
+          libs = []
+          lib_root = "audit/decoded/lib"
+          if os.path.isdir(lib_root):
+              libs = sorted(x for x in os.listdir(lib_root) if os.path.isdir(os.path.join(lib_root, x)))
+          with open("audit/COMPATIBILITY-AUDIT.txt", "w") as f:
+              f.write("AxisGSI APK compatibility audit\\n")
+              f.write("===============================\\n")
+              f.write(f"Package: {package}\\nVersion: {version}\\n")
+              f.write(f"minSdkVersion: {min_sdk}\\ntargetSdkVersion: {target_sdk}\\n")
+              f.write("Native ABI folders: " + (", ".join(libs) if libs else "none found") + "\\n")
+              f.write("\\nAndroid 16 review notes:\\n")
+              f.write("- A low target SDK can trigger modern Android installation restrictions.\\n")
+              f.write("- 32-bit-only native libraries require a device/system that supports 32-bit app processes.\\n")
+              f.write("- Successful decoding does not prove runtime compatibility; install and launch tests are still required.\\n")
+          print(open("audit/COMPATIBILITY-AUDIT.txt").read())
+          PY
+          find audit/decoded/lib -maxdepth 1 -mindepth 1 -type d -printf '%f\\n' 2>/dev/null | sort > audit/NATIVE-ABIS.txt || true
+          sha256sum audit/AxisGSI.apk > audit/SHA256SUMS.txt
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxisGSI-Android16-Audit
+          path: |
+            audit/COMPATIBILITY-AUDIT.txt
+            audit/NATIVE-ABIS.txt
+            audit/SHA256SUMS.txt
+            audit/decoded/AndroidManifest.xml
+          if-no-files-found: error
+          retention-days: 30
