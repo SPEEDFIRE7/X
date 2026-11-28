@@ -1,188 +1,44 @@
-name: AxisGSI APK Android Compatibility Rebuild
+name: Download AxisGSI APK
 
 on:
   workflow_dispatch:
     inputs:
       pixeldrain_id:
-        description: "Pixeldrain file ID (not the full URL)"
+        description: "Pixeldrain file ID"
         required: true
         default: "qcumBuYf"
         type: string
-      min_sdk:
-        description: "Minimum Android API level (29 = Android 10)"
-        required: true
-        default: "29"
-        type: choice
-        options:
-          - "29"
-          - "30"
-          - "31"
-          - "32"
-          - "33"
-          - "34"
-          - "35"
-          - "36"
-          - "37"
 
 permissions:
   contents: read
 
 jobs:
-  rebuild-apk:
+  download-apk:
     runs-on: namespace-profile-speed
-    timeout-minutes: 45
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install Android SDK and Build Tools
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android 10-17 SDK platforms and Build Tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-29" \
-            "platforms;android-30" \
-            "platforms;android-31" \
-            "platforms;android-32" \
-            "platforms;android-33" \
-            "platforms;android-34" \
-            "platforms;android-35" \
-            "platforms;android-36" \
-            "platforms;android-37" \
-            "build-tools;37.0.0"
-
       - name: Download AxisGSI APK
         env:
           PIXELDRAIN_ID: ${{ inputs.pixeldrain_id }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p input output
-          echo "Downloading Pixeldrain file ID: ${PIXELDRAIN_ID}"
+          mkdir -p output
           curl --fail --location --retry 4 --retry-delay 3 \
             "https://pixeldrain.com/api/file/${PIXELDRAIN_ID}?download" \
-            --output input/AxisGSI-original.apk
-          file input/AxisGSI-original.apk
-          unzip -t input/AxisGSI-original.apk >/dev/null
-          test -s input/AxisGSI-original.apk
+            --output output/AxisGSI.apk
+          test -s output/AxisGSI.apk
+          file output/AxisGSI.apk
+          unzip -t output/AxisGSI.apk
+          sha256sum output/AxisGSI.apk | tee output/SHA256SUMS.txt
 
-      - name: Install latest Apktool
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq
-          VERSION="$(curl -fsSL https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.tag_name' | sed 's/^v//')"
-          test -n "$VERSION"
-          curl -fsSL "https://github.com/iBotPeaches/Apktool/releases/download/v${VERSION}/apktool_${VERSION}.jar" -o /tmp/apktool.jar
-          printf '#!/usr/bin/env bash\nexec java -jar /tmp/apktool.jar "$@"\n' | sudo tee /usr/local/bin/apktool >/dev/null
-          sudo chmod +x /usr/local/bin/apktool
-          apktool --version
-
-      - name: Inspect original APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"\n          test -n "$SDK_ROOT"\n          BUILD_TOOLS="$SDK_ROOT/build-tools/37.0.0"
-          "$BUILD_TOOLS/aapt" dump badging input/AxisGSI-original.apk | tee output/original-apk-info.txt
-          "$BUILD_TOOLS/aapt" dump permissions input/AxisGSI-original.apk > output/original-permissions.txt || true
-
-      - name: Decode and apply minimum SDK compatibility setting
-        env:
-          MIN_SDK: ${{ inputs.min_sdk }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          apktool d -f input/AxisGSI-original.apk -o work/AxisGSI
-          python3 - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          manifest = Path("work/AxisGSI/AndroidManifest.xml")
-          if not manifest.exists():
-              raise SystemExit("Decoded AndroidManifest.xml was not found")
-
-          tree = ET.parse(manifest)
-          root = tree.getroot()
-          android = "{http://schemas.android.com/apk/res/android}"
-          uses_sdk = root.find("uses-sdk")
-          if uses_sdk is None:
-              uses_sdk = ET.Element("uses-sdk")
-              root.insert(0, uses_sdk)
-
-          old_min = uses_sdk.get(android + "minSdkVersion", "(not declared)")
-          old_target = uses_sdk.get(android + "targetSdkVersion", "(not declared)")
-          new_min = os.environ["MIN_SDK"]
-          uses_sdk.set(android + "minSdkVersion", new_min)
-
-          tree.write(manifest, encoding="utf-8", xml_declaration=True)
-          Path("output/sdk-compatibility-report.txt").write_text(
-              "APK: AxisGSI\n"
-              f"Original minSdkVersion: {old_min}\n"
-              f"New minSdkVersion: {new_min}\n"
-              f"Original targetSdkVersion (preserved): {old_target}\n"
-              "Android API levels: 29=Android 10, 30=11, 31/32=12, "
-              "33=13, 34=14, 35=15, 36=16, 37=17.\n\n"
-              "IMPORTANT: Changing minSdkVersion only changes the install-time "
-              "minimum. It does not port APIs, native libraries, permissions, "
-              "storage behavior, or background services. Runtime compatibility "
-              "must be tested on real/emulated Android versions. targetSdkVersion "
-              "was deliberately preserved to avoid silently changing app behavior.\n",
-              encoding="utf-8"
-          )
-          print(f"minSdkVersion: {old_min} -> {new_min}")
-          print(f"targetSdkVersion preserved: {old_target}")
-          PY
-
-      - name: Rebuild APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          apktool b work/AxisGSI -o output/AxisGSI-unsigned.apk
-          test -s output/AxisGSI-unsigned.apk
-
-      - name: Align and sign APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/37.0.0"
-          keytool -genkeypair -v \
-            -keystore output/axisgsi-debug.keystore \
-            -storepass android -keypass android \
-            -alias axisgsi -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=AxisGSI Compatibility Build, OU=GitHub Actions, O=Local Build, C=US"
-          "$BUILD_TOOLS/zipalign" -f -p 4 \
-            output/AxisGSI-unsigned.apk output/AxisGSI-aligned.apk
-          "$BUILD_TOOLS/apksigner" sign \
-            --ks output/axisgsi-debug.keystore \
-            --ks-pass pass:android --key-pass pass:android \
-            --out output/AxisGSI-Android-Compat.apk \
-            output/AxisGSI-aligned.apk
-          "$BUILD_TOOLS/apksigner" verify --verbose output/AxisGSI-Android-Compat.apk
-          "$BUILD_TOOLS/aapt" dump badging output/AxisGSI-Android-Compat.apk > output/rebuilt-apk-info.txt
-
-      - name: Upload rebuilt APK and reports
+      - name: Upload original AxisGSI APK
         uses: actions/upload-artifact@v4
         with:
-          name: AxisGSI-Android-Compatibility-APK
+          name: AxisGSI-APK
           path: |
-            output/AxisGSI-Android-Compat.apk
-            output/sdk-compatibility-report.txt
-            output/original-apk-info.txt
-            output/original-permissions.txt
-            output/rebuilt-apk-info.txt
+            output/AxisGSI.apk
+            output/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
