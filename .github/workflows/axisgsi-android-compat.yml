@@ -95,7 +95,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_TOOLS="$ANDROID_SDK_ROOT/build-tools/37.0.0"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"\n          test -n "$SDK_ROOT"\n          BUILD_TOOLS="$SDK_ROOT/build-tools/37.0.0"
           "$BUILD_TOOLS/aapt" dump badging input/AxisGSI-original.apk | tee output/original-apk-info.txt
           "$BUILD_TOOLS/aapt" dump permissions input/AxisGSI-original.apk > output/original-permissions.txt || true
 
