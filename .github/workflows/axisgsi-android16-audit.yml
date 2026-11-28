@@ -62,18 +62,18 @@ jobs:
           if os.path.isdir(lib_root):
               libs = sorted(x for x in os.listdir(lib_root) if os.path.isdir(os.path.join(lib_root, x)))
           with open("audit/COMPATIBILITY-AUDIT.txt", "w") as f:
-              f.write("AxisGSI APK compatibility audit\\n")
-              f.write("===============================\\n")
-              f.write(f"Package: {package}\\nVersion: {version}\\n")
-              f.write(f"minSdkVersion: {min_sdk}\\ntargetSdkVersion: {target_sdk}\\n")
-              f.write("Native ABI folders: " + (", ".join(libs) if libs else "none found") + "\\n")
-              f.write("\\nAndroid 16 review notes:\\n")
-              f.write("- A low target SDK can trigger modern Android installation restrictions.\\n")
-              f.write("- 32-bit-only native libraries require a device/system that supports 32-bit app processes.\\n")
-              f.write("- Successful decoding does not prove runtime compatibility; install and launch tests are still required.\\n")
+              f.write("AxisGSI APK compatibility audit\n")
+              f.write("===============================\n")
+              f.write(f"Package: {package}\nVersion: {version}\n")
+              f.write(f"minSdkVersion: {min_sdk}\ntargetSdkVersion: {target_sdk}\n")
+              f.write("Native ABI folders: " + (", ".join(libs) if libs else "none found") + "\n")
+              f.write("\nAndroid 16 review notes:\n")
+              f.write("- A low target SDK can trigger modern Android installation restrictions.\n")
+              f.write("- 32-bit-only native libraries require a device/system that supports 32-bit app processes.\n")
+              f.write("- Successful decoding does not prove runtime compatibility; install and launch tests are still required.\n")
           print(open("audit/COMPATIBILITY-AUDIT.txt").read())
           PY
-          find audit/decoded/lib -maxdepth 1 -mindepth 1 -type d -printf '%f\\n' 2>/dev/null | sort > audit/NATIVE-ABIS.txt || true
+          find audit/decoded/lib -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null | sort > audit/NATIVE-ABIS.txt || true
           sha256sum audit/AxisGSI.apk > audit/SHA256SUMS.txt
 
       - name: Upload audit results
